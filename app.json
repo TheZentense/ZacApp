@@ -6,11 +6,27 @@
     "orientation": "portrait",
     "scheme": "zacapp",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "ios": { "supportsTablet": true, "bundleIdentifier": "gt.edu.zacapp" },
-    "android": { "package": "gt.edu.zacapp", "adaptiveIcon": { "backgroundColor": "#F2F7EE" } },
-    "web": { "bundler": "metro", "output": "static" },
-    "plugins": ["expo-router"],
-    "experiments": { "typedRoutes": true }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "gt.edu.zacapp"
+    },
+    "android": {
+      "package": "gt.edu.zacapp",
+      "adaptiveIcon": {
+        "backgroundColor": "#F2F7EE"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-status-bar"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }
