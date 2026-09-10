@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "ZacApp",
+    "slug": "zacapp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "zacapp",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": true, "bundleIdentifier": "gt.edu.zacapp" },
+    "android": { "package": "gt.edu.zacapp", "adaptiveIcon": { "backgroundColor": "#F2F7EE" } },
+    "web": { "bundler": "metro", "output": "static" },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}
