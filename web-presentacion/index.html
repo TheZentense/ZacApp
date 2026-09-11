@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f2d1a">
+  <meta name="description" content="Portal oficial del proyecto académico ZacApp.">
+  <title>ZacApp | Portal del Proyecto</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- =========================================================
+     PORTADA PRINCIPAL (Hero Section)
+     ========================================================= -->
+<header class="hero" id="inicio">
+
+  <!-- Barra de navegación superior -->
+  <nav class="nav shell">
+    <a class="brand" href="#inicio">
+      <span class="brand-logo"><img src="logo-zacapp.png" alt="ZacApp"></span>
+      <span>ZacApp</span>
+    </a>
+    <div class="nav-links">
+      <a href="#inicio">Inicio</a>
+      <a href="#proyecto">Proyecto</a>
+      <a href="#enlaces">Enlaces</a>
+    </div>
+  </nav>
+
+  <!-- Capa de brillo sobre el fondo -->
+  <div class="hero-overlay"></div>
+
+  <!-- Contenido central de bienvenida -->
+  <div class="hero-content shell">
+
+    <!-- Logotipo central con anillos luminosos -->
+    <div class="logo-showcase">
+      <div class="logo-ring"></div>
+      <div class="logo-ring ring-2"></div>
+      <div class="logo-circle">
+        <img src="logo-zacapp.png" alt="Logotipo ZacApp">
+      </div>
+    </div>
+
+    <!-- Título del sistema y lema -->
+    <h1>Zac<span>App</span></h1>
+    <p class="subtitle">Sistema de Reportes de Incidentes</p>
+    <div class="divider"></div>
+    <p class="tagline">Tecnología para una mejor comunidad</p>
+
+    <!-- Tarjetas de accesos directos (GitHub, Figma, ClickUp, Drive) -->
+    <section class="quick-links" id="enlaces">
+
+      <!-- Enlace a GitHub -->
+      <a class="quick-card" href="https://github.com/TheZentense/ZacApp" target="_blank" rel="noopener noreferrer">
+        <div class="app-icon"><img src="github.svg" alt="GitHub"></div>
+        <div class="quick-copy">
+          <h3>GitHub</h3>
+          <p>Código fuente<br>del proyecto</p>
+        </div>
+        <div class="quick-arrow">›</div>
+      </a>
+
+      <!-- Enlace a Figma -->
+      <a class="quick-card" href="https://www.figma.com/design/BAJXzdpx7EMI8nFyO1x7JY/ZacApp---UX-UI?node-id=0-1&t=ZmJZ7NHYnERPfsMv-1" target="_blank" rel="noopener noreferrer">
+        <div class="app-icon"><img src="figma.svg" alt="Figma"></div>
+        <div class="quick-copy">
+          <h3>Figma</h3>
+          <p>Diseño UX/UI<br>y prototipo</p>
+        </div>
+        <div class="quick-arrow">›</div>
+      </a>
+
+      <!-- Enlaces a ClickUp (Tablero y Gantt) -->
+      <div class="quick-card clickup-card">
+        <div class="app-icon"><img src="clickup.svg" alt="ClickUp"></div>
+        <div class="quick-copy">
+          <h3>ClickUp</h3>
+          <p>Tablero y<br>diagrama Gantt</p>
+          <div class="click-buttons">
+            <a href="https://sharing.clickup.com/90141612047/b/h/4-90147958147-2/fc4339aaa9cbb2f" target="_blank" rel="noopener noreferrer">Tablero</a>
+            <a href="https://sharing.clickup.com/90141612047/g/h/4-90147958147-7/4f6b5c6d8b77a7b" target="_blank" rel="noopener noreferrer">Gantt</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Enlace a Google Drive -->
+      <a class="quick-card" href="https://drive.google.com/drive/folders/1d0LhE3tYhYMsgx0Omnrh6OZICINDS79r?usp=sharing" target="_blank" rel="noopener noreferrer">
+        <div class="app-icon"><img src="google-drive.svg" alt="Google Drive"></div>
+        <div class="quick-copy">
+          <h3>Google Drive</h3>
+          <p>Documentación<br>del proyecto</p>
+        </div>
+        <div class="quick-arrow">›</div>
+      </a>
+
+    </section>
+
+    <!-- Indicador para invitar a bajar -->
+    <a class="scroll-indicator" href="#proyecto">
+      <span class="mouse"><i></i></span>
+      <small>Desliza para conocer más</small>
+      <b>⌄</b>
+    </a>
+  </div>
+</header>
+
+
+<!-- =========================================================
+     SECCIÓN INFORMATIVA DEL PROYECTO
+     ========================================================= -->
+<main>
+  <section class="project-section" id="proyecto">
+    <div class="shell project-grid">
+
+      <!-- Título de la sección -->
+      <div class="project-title reveal">
+        <span class="section-kicker">SOBRE EL PROYECTO</span>
+        <h2>Una Zacapa<br><span>más conectada</span></h2>
+      </div>
+
+      <!-- Descripción general -->
+      <div class="project-text reveal">
+        <p>ZacApp es una plataforma digital orientada al reporte, seguimiento y gestión de incidentes comunitarios en Zacapa. Su propósito es facilitar la comunicación entre la ciudadanía, la administración y el personal responsable de atender cada caso.</p>
+        <p>El sistema busca centralizar la información, mantener trazabilidad sobre el estado de los reportes y ofrecer un proceso más ordenado desde el registro del incidente hasta su verificación y cierre.</p>
+      </div>
+
+      <!-- Tarjeta del objetivo principal -->
+      <div class="objective-card reveal">
+        <div class="leaf">◒</div>
+        <div>
+          <h3>Nuestro objetivo</h3>
+          <p>Contribuir al bienestar de la comunidad mediante herramientas tecnológicas que permitan una atención más organizada, transparente y eficiente.</p>
+        </div>
+      </div>
+
+      <!-- 3 Pilares o características clave -->
+      <div class="project-features">
+        <article class="feature-card reveal">
+          <span>01</span>
+          <h3>Reporte ciudadano</h3>
+          <p>Registro de incidentes con categoría, descripción, evidencia y ubicación.</p>
+        </article>
+        <article class="feature-card reveal">
+          <span>02</span>
+          <h3>Seguimiento</h3>
+          <p>Consulta del estado e historial del incidente durante todo su proceso de atención.</p>
+        </article>
+        <article class="feature-card reveal">
+          <span>03</span>
+          <h3>Gestión coordinada</h3>
+          <p>Asignación y control del trabajo entre administración y personal de mantenimiento.</p>
+        </article>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<!-- =========================================================
+     PIE DE PÁGINA
+     ========================================================= -->
+<footer>
+  <div class="shell footer-inner">
+    <span>ZacApp · Proyecto académico</span>
+    <span>Análisis de Sistemas II · 2026</span>
+  </div>
+</footer>
+
+<!-- Script para animaciones al hacer scroll -->
+<script src="script.js"></script>
+</body>
+</html>
