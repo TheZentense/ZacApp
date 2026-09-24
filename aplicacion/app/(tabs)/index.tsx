@@ -5,6 +5,7 @@ import { AppButton } from '@/components/AppButton';
 import { IncidentCard } from '@/components/IncidentCard';
 import { mockIncidents } from '@/data/mockIncidents';
 import { colors, radius, spacing } from '@/theme/tokens';
+import { useSession } from '@/context/SessionContext';
 
 const summary = [
   { label: 'Reportes registrados', value: '24', icon: 'file-tray-full-outline' },
@@ -17,48 +18,57 @@ const actions = [
   { title: 'Nuevo reporte', copy: 'Registrar una incidencia comunitaria', icon: 'add-circle-outline', route: '/report/new' },
   { title: 'Reportes', copy: 'Consultar reportes registrados', icon: 'document-text-outline', route: '/reports' },
   { title: 'Seguimiento', copy: 'Ver trazabilidad y responsables', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Servicios', copy: 'Explorar recursos y atención municipal', icon: 'apps-outline', route: '/services' },
   { title: 'Perfil', copy: 'Revisar datos del ciudadano', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const adminActions = [
+  { title: 'Gestionar reportes', copy: 'Revisar incidencias ciudadanas', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Seguimiento', copy: 'Controlar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Funciones', copy: 'Abrir herramientas administrativas', icon: 'menu-outline', route: '/admin-menu' },
+  { title: 'Perfil', copy: 'Revisar la sesión administrativa', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const maintenanceActions = [
+  { title: 'Asignaciones', copy: 'Consultar trabajos del área de Agua potable', icon: 'clipboard-outline', route: '/reports' },
+  { title: 'Seguimiento', copy: 'Actualizar el avance de las atenciones', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Perfil', copy: 'Revisar cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const maintenanceSummary = [
+  { label: 'Asignaciones recibidas', value: '6', icon: 'clipboard-outline' },
+  { label: 'En atención', value: '2', icon: 'construct-outline' },
+  { label: 'Completadas', value: '3', icon: 'checkmark-circle-outline' },
+  { label: 'Pendientes', value: '1', icon: 'time-outline' }
 ] as const;
 
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
+  const { role } = useSession();
+  const isAdmin = role === 'admin';
+  const isMaintenance = role === 'maintenance';
+  const isStaff = isAdmin || isMaintenance;
+  const visibleActions = isAdmin ? adminActions : isMaintenance ? maintenanceActions : actions;
+  const visibleSummary = isMaintenance ? maintenanceSummary : summary;
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
-      <View style={[styles.shell, isWide && styles.shellWide]}>
-        {isWide && (
-          <View style={styles.sidebar}>
-            <View style={styles.sidebarBrand}>
-              <View style={styles.sidebarLogo}><Ionicons name="leaf-outline" size={24} color={colors.white} /></View>
-              <View>
-                <Text style={styles.sidebarTitle}>ZacApp</Text>
-                <Text style={styles.sidebarSubtitle}>Panel ciudadano</Text>
-              </View>
-            </View>
-            {actions.map((item) => (
-              <Pressable key={item.title} style={styles.navItem} onPress={() => router.push(item.route)}>
-                <Ionicons name={item.icon} size={19} color={colors.primary} />
-                <Text style={styles.navLabel}>{item.title}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
-
+    <ScrollView style={[styles.scroll, isStaff && styles.adminScroll]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
+      <View style={styles.shell}>
         <View style={styles.main}>
-          <View style={styles.header}>
+          <View style={[styles.header, isAdmin && styles.adminHeader, isMaintenance && styles.maintenanceHeader]}>
             <View style={styles.headerText}>
-              <Text style={styles.eyebrow}>BIENVENIDO</Text>
-              <Text style={styles.heading}>Dashboard ZacApp</Text>
-              <Text style={styles.copy}>Resumen visual de reportes comunitarios y accesos principales.</Text>
+              <Text style={[styles.eyebrow, isStaff && styles.adminEyebrow, isMaintenance && styles.maintenanceEyebrow]}>{isAdmin ? 'SUPERADMINISTRACIÓN' : isMaintenance ? 'MANTENIMIENTO' : 'BIENVENIDO'}</Text>
+              <Text style={styles.heading}>{isAdmin ? 'Panel administrativo' : isMaintenance ? 'Panel de Agua potable' : 'Dashboard ZacApp'}</Text>
+              <Text style={styles.copy}>{isAdmin ? 'Resumen general para gestionar reportes y funciones del sistema.' : isMaintenance ? 'Asignaciones recibidas por el departamento y estado de atención.' : 'Resumen visual de reportes comunitarios y accesos principales.'}</Text>
             </View>
-            <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={isWide ? styles.headerButton : undefined} />
+            {!isStaff && <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={isWide ? styles.headerButton : undefined} />}
           </View>
 
           <View style={styles.statsGrid}>
-            {summary.map((item) => (
+            {visibleSummary.map((item) => (
               <View key={item.label} style={[styles.stat, isWide && styles.statWide]}>
-                <View style={styles.statIcon}><Ionicons name={item.icon} size={22} color={colors.primary} /></View>
+                <View style={[styles.statIcon, isStaff && styles.adminIcon, isMaintenance && styles.maintenanceIcon]}><Ionicons name={item.icon} size={22} color={isMaintenance ? '#0F4C5C' : isAdmin ? '#A66A00' : colors.primary} /></View>
                 <Text style={styles.statNumber}>{item.value}</Text>
                 <Text style={styles.statLabel}>{item.label}</Text>
               </View>
@@ -67,12 +77,12 @@ export default function HomeScreen() {
 
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Accesos rápidos</Text>
-            <Text style={styles.sectionMeta}>Datos simulados</Text>
+            <Text style={styles.sectionMeta}>Resumen general</Text>
           </View>
           <View style={styles.actionsGrid}>
-            {actions.map((item) => (
+            {visibleActions.map((item) => (
               <Pressable key={item.title} style={[styles.actionCard, isWide && styles.actionCardWide]} onPress={() => router.push(item.route)}>
-                <View style={styles.actionIcon}><Ionicons name={item.icon} size={23} color={colors.primary} /></View>
+                <View style={[styles.actionIcon, isStaff && styles.adminIcon, isMaintenance && styles.maintenanceIcon]}><Ionicons name={item.icon} size={23} color={isMaintenance ? '#0F4C5C' : isAdmin ? '#A66A00' : colors.primary} /></View>
                 <View style={styles.actionText}>
                   <Text style={styles.actionTitle}>{item.title}</Text>
                   <Text style={styles.actionCopy}>{item.copy}</Text>
@@ -97,28 +107,27 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.background },
+  adminScroll: { backgroundColor: '#EEF2F7' },
   page: { padding: spacing.lg, backgroundColor: colors.background },
   pageWide: { padding: spacing.xl },
-  shell: { width: '100%', maxWidth: 1180, alignSelf: 'center' },
-  shellWide: { flexDirection: 'row', gap: spacing.xl, alignItems: 'flex-start' },
-  sidebar: { width: 250, backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
-  sidebarBrand: { flexDirection: 'row', gap: spacing.md, alignItems: 'center', paddingBottom: spacing.lg, marginBottom: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  sidebarLogo: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  sidebarTitle: { color: colors.primary, fontSize: 19, fontWeight: '800' },
-  sidebarSubtitle: { color: colors.muted, fontSize: 12 },
-  navItem: { minHeight: 46, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface },
-  navLabel: { color: colors.primary, fontWeight: '700' },
+  shell: { width: '100%', maxWidth: 1080, alignSelf: 'center' },
   main: { flex: 1, gap: spacing.lg },
   header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.xl, gap: spacing.lg },
+  adminHeader: { backgroundColor: '#14243A' },
+  maintenanceHeader: { backgroundColor: '#0F4C5C' },
   headerText: { gap: spacing.xs },
   headerButton: { alignSelf: 'flex-start', minWidth: 190 },
   eyebrow: { color: colors.secondary, fontWeight: '800', letterSpacing: 1.5 },
+  adminEyebrow: { color: '#E7B04B' },
+  maintenanceEyebrow: { color: '#7DD3CF' },
   heading: { color: colors.white, fontSize: 30, fontWeight: '800', marginTop: spacing.xs },
   copy: { color: '#DDE8D7', fontSize: 16, lineHeight: 23, marginTop: spacing.sm, maxWidth: 620 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   stat: { flexGrow: 1, flexBasis: 145, backgroundColor: colors.white, padding: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.xs },
   statWide: { flexBasis: 180 },
   statIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
+  adminIcon: { backgroundColor: '#FFF0CF' },
+  maintenanceIcon: { backgroundColor: '#DDF6F4' },
   statNumber: { color: colors.primary, fontSize: 26, fontWeight: '800' },
   statLabel: { color: colors.muted },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
