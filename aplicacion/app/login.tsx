@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { router } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
+import { useSession } from '@/context/SessionContext';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('demo@zacapp.gt');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('ciudadano@zacapp.gt');
+  const [password, setPassword] = useState('zacapp1234');
+  const { signIn } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
 
@@ -17,7 +18,7 @@ export default function LoginScreen() {
         <View style={[styles.content, isNativeMobile && styles.contentMobile]}>
           <View style={[styles.brandPanel, isNativeMobile && styles.brandPanelMobile]}>
             <View style={[styles.logoMark, isNativeMobile && styles.logoMarkMobile]}>
-              <Ionicons name="leaf-outline" size={isNativeMobile ? 34 : 34} color={colors.white} />
+              <Image source={require('../assets/images/zacapp-logo-dark.png')} style={styles.logoImage} resizeMode="contain" />
             </View>
             <Text style={[styles.kicker, isNativeMobile && styles.kickerMobile]}>Sistema comunitario</Text>
             <Text style={[styles.title, isNativeMobile && styles.titleMobile]}>ZacApp</Text>
@@ -26,7 +27,7 @@ export default function LoginScreen() {
 
           <View style={[styles.card, isNativeMobile && styles.cardMobile]}>
             <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Bienvenido</Text>
-            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Ingresa con la cuenta de demostración para revisar el avance visual.</Text>
+            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Ingresa con tu correo y contraseña para acceder a ZacApp.</Text>
 
             <Text style={styles.label}>Correo electrónico</Text>
             <TextInput
@@ -49,8 +50,16 @@ export default function LoginScreen() {
               placeholderTextColor={colors.muted}
             />
 
-            <AppButton label="Iniciar sesión" icon="log-in-outline" onPress={() => router.replace('/(tabs)')} />
-            <Text style={styles.helpText}>Acceso simulado. La autenticación real se mantiene sin cambios.</Text>
+            <AppButton
+              label="Iniciar sesión"
+              icon="log-in-outline"
+              onPress={() => {
+                signIn(email);
+                router.replace('/(tabs)');
+              }}
+            />
+            <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
+            <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
           </View>
         </View>
       </ScrollView>
@@ -66,8 +75,9 @@ const styles = StyleSheet.create({
   contentMobile: { maxWidth: 430, flexDirection: 'column', flexWrap: 'nowrap', alignItems: 'stretch', gap: spacing.lg },
   brandPanel: { flex: 1, minWidth: 280, backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.xl, justifyContent: 'center', gap: spacing.md },
   brandPanelMobile: { flex: 0, flexGrow: 0, flexShrink: 0, minWidth: 0, minHeight: 0, maxHeight: 340, width: '100%', borderRadius: radius.lg, paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md, justifyContent: 'flex-start', gap: 6 },
-  logoMark: { width: 68, height: 68, borderRadius: 22, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
-  logoMarkMobile: { width: 68, height: 68, borderRadius: 20 },
+  logoMark: { width: 104, height: 104, borderRadius: 24, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  logoMarkMobile: { width: 88, height: 88, borderRadius: 20 },
+  logoImage: { width: '100%', height: '100%' },
   kicker: { color: colors.accent, fontSize: 13, fontWeight: '800', textTransform: 'uppercase' },
   kickerMobile: { fontSize: 12 },
   title: { color: colors.white, fontSize: 42, fontWeight: '800' },
