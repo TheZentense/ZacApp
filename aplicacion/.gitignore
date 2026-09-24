@@ -4,6 +4,7 @@ dist/
 web-build/
 .env
 .env.local
+/Iniciar ZacApp - Equipo.cmd
 *.jks
 *.keystore
 *.p8
