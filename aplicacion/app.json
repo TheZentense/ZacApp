@@ -23,7 +23,15 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir que ZacApp acceda a la cámara para adjuntar evidencia a los reportes.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
