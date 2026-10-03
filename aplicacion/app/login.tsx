@@ -1,9 +1,16 @@
 import { useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
+
+const demoAccounts = [
+  { label: 'Ciudadano', email: 'ciudadano@zacapp.gt', detail: 'Mis reportes y seguimiento' },
+  { label: 'Administrador', email: 'admin@zacapp.gt', detail: 'Vista general del sistema' },
+  { label: 'Mantenimiento Agua', email: 'mantenimiento.agua@zacapp.gt', detail: 'Asignaciones de Agua' },
+  { label: 'Mantenimiento EEMZA', email: 'mantenimiento.eemza@zacapp.gt', detail: 'Asignaciones electricas' }
+] as const;
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('ciudadano@zacapp.gt');
@@ -28,6 +35,19 @@ export default function LoginScreen() {
           <View style={[styles.card, isNativeMobile && styles.cardMobile]}>
             <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Bienvenido</Text>
             <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Ingresa con tu correo y contraseña para acceder a ZacApp.</Text>
+
+            <Text style={styles.demoTitle}>Modo demostracion</Text>
+            <View style={styles.demoSelector}>
+              {demoAccounts.map((account) => {
+                const selected = email === account.email;
+                return (
+                  <Pressable key={account.email} style={[styles.demoCard, selected && styles.demoCardActive]} onPress={() => setEmail(account.email)}>
+                    <Text style={[styles.demoLabel, selected && styles.demoLabelActive]}>{account.label}</Text>
+                    <Text style={[styles.demoDetail, selected && styles.demoDetailActive]}>{account.detail}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
             <Text style={styles.label}>Correo electrónico</Text>
             <TextInput
@@ -58,7 +78,7 @@ export default function LoginScreen() {
                 router.replace('/(tabs)');
               }}
             />
-            <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
+            <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register' as never)} />
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
           </View>
         </View>
@@ -90,6 +110,14 @@ const styles = StyleSheet.create({
   cardTitleMobile: { fontSize: 24 },
   cardCopy: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: spacing.md },
   cardCopyMobile: { fontSize: 14, lineHeight: 20, marginBottom: spacing.sm },
+  demoTitle: { color: colors.secondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
+  demoSelector: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
+  demoCard: { flexGrow: 1, flexBasis: 170, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, backgroundColor: colors.surface },
+  demoCardActive: { borderColor: colors.primary, backgroundColor: colors.softGreen },
+  demoLabel: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+  demoLabelActive: { color: colors.primary },
+  demoDetail: { color: colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  demoDetailActive: { color: colors.secondary },
   label: { color: colors.text, fontWeight: '600', marginTop: spacing.xs },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontSize: 16, backgroundColor: colors.surface },
   helpText: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: spacing.xs }

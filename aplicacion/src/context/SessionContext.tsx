@@ -1,13 +1,15 @@
 import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import type { MaintenanceDepartment } from '@/types/domain';
 
 export type UserRole = 'citizen' | 'admin' | 'maintenance';
 
 type SessionContextValue = {
   role: UserRole;
   email: string;
-  department: string | null;
+  department: MaintenanceDepartment | null;
   signIn: (email: string) => void;
   signOut: () => void;
+  setDemoRole: (role: UserRole, department?: MaintenanceDepartment | null) => void;
 };
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -15,7 +17,7 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('citizen');
   const [email, setEmail] = useState('ciudadano@zacapp.gt');
-  const [department, setDepartment] = useState<string | null>(null);
+  const [department, setDepartment] = useState<MaintenanceDepartment | null>(null);
 
   const value = useMemo(
     () => ({
@@ -30,7 +32,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           setDepartment(null);
         } else if (normalizedEmail.includes('mantenimiento.agua')) {
           setRole('maintenance');
-          setDepartment('Agua potable');
+          setDepartment('Agua');
+        } else if (normalizedEmail.includes('mantenimiento.eemza')) {
+          setRole('maintenance');
+          setDepartment('EEMZA');
         } else {
           setRole('citizen');
           setDepartment(null);
@@ -40,6 +45,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setRole('citizen');
         setEmail('ciudadano@zacapp.gt');
         setDepartment(null);
+      },
+      setDemoRole: (nextRole: UserRole, nextDepartment: MaintenanceDepartment | null = null) => {
+        setRole(nextRole);
+        setDepartment(nextRole === 'maintenance' ? nextDepartment ?? 'Agua' : null);
+        if (nextRole === 'admin') setEmail('admin@zacapp.gt');
+        else if (nextRole === 'maintenance') setEmail(nextDepartment === 'EEMZA' ? 'mantenimiento.eemza@zacapp.gt' : 'mantenimiento.agua@zacapp.gt');
+        else setEmail('ciudadano@zacapp.gt');
       }
     }),
     [department, email, role]
