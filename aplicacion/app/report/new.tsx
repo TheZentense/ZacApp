@@ -4,23 +4,106 @@ import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
+import { getPriorityLabel, getStatusLabel } from '@/components/StatusBadge';
+import { useReports } from '@/context/ReportsContext';
+import { useSession } from '@/context/SessionContext';
+import { demoProfileByEmail } from '@/data/mockIncidents';
 import { colors, radius, spacing } from '@/theme/tokens';
+import type { Incident, IncidentPriority } from '@/types/domain';
+
+const categories = ['Agua potable', 'Alumbrado público', 'Drenajes', 'Desechos sólidos', 'Calles', 'Áreas públicas'];
+
+const priorityOptions: { key: IncidentPriority; label: string }[] = [
+  { key: 'BAJA', label: 'Baja' },
+  { key: 'MEDIA', label: 'Media' },
+  { key: 'ALTA', label: 'Alta' },
+  { key: 'URGENTE', label: 'Urgente' }
+];
+
+type FormErrors = Partial<Record<'category' | 'description' | 'location' | 'priority', string>>;
 
 export default function NewReportScreen() {
-  const [category, setCategory] = useState('Alumbrado público');
+  const { addDemoReport } = useReports();
+  const { email } = useSession();
+  const profile = demoProfileByEmail[email as keyof typeof demoProfileByEmail] ?? demoProfileByEmail['ciudadano@zacapp.gt'];
+  const [category, setCategory] = useState('');
+  const [priority, setPriority] = useState<IncidentPriority>('MEDIA');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
+  const [evidenceAttached, setEvidenceAttached] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [submittedReport, setSubmittedReport] = useState<Incident | null>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const openCamera = async () => {
     if (!cameraPermission?.granted) await requestCameraPermission();
     setCameraOpen(true);
   };
-  const submit = () => {
-    if (!description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Agrega una descripción y ubicación.');
-    Alert.alert('Reporte registrado', 'Tu reporte se registró correctamente.', [{ text: 'Aceptar', onPress: () => router.back() }]);
+
+  const validate = () => {
+    const nextErrors: FormErrors = {};
+    if (!category) nextErrors.category = 'Selecciona una categoria.';
+    if (!description.trim()) nextErrors.description = 'Completa la descripcion antes de enviar el reporte.';
+    if (!location.trim()) nextErrors.location = 'Completa la ubicacion antes de enviar el reporte.';
+    if (!priority) nextErrors.priority = 'Selecciona una prioridad.';
+    setErrors(nextErrors);
+    return nextErrors;
   };
+
+  const submit = () => {
+    const nextErrors = validate();
+    if (Object.keys(nextErrors).length > 0) {
+      Alert.alert('Campos obligatorios', 'Completa los campos obligatorios antes de enviar el reporte.');
+      return;
+    }
+
+    const report = addDemoReport({
+      category,
+      description,
+      location,
+      priority,
+      citizenEmail: email,
+      citizenName: profile.name,
+      evidenceAttached
+    });
+    setSubmittedReport(report);
+  };
+
+  const resetForm = () => {
+    setCategory('');
+    setPriority('MEDIA');
+    setDescription('');
+    setLocation('');
+    setEvidenceAttached(false);
+    setErrors({});
+    setSubmittedReport(null);
+  };
+
+  if (submittedReport) {
+    return (
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
+        <View style={styles.confirmation}>
+          <View style={styles.confirmIcon}>
+            <Ionicons name="checkmark" size={28} color={colors.white} />
+          </View>
+          <Text style={styles.confirmTitle}>Reporte enviado correctamente</Text>
+          <Text style={styles.confirmCopy}>Tu reporte fue creado en modo demostracion.</Text>
+
+          <View style={styles.confirmDetails}>
+            <SummaryRow label="Codigo" value={submittedReport.code} />
+            <SummaryRow label="Estado" value={getStatusLabel(submittedReport.status)} />
+            <SummaryRow label="Fecha" value={submittedReport.createdAt} />
+            <SummaryRow label="Departamento responsable" value={submittedReport.department} />
+            <SummaryRow label="Evidencia" value={submittedReport.evidenceAttached ? 'Fotografia demo adjunta' : 'Sin evidencia adjunta'} />
+          </View>
+
+          <AppButton label="Ver mis reportes" icon="document-text-outline" onPress={() => router.replace('/(tabs)/reports' as never)} />
+          <AppButton label="Crear otro reporte" variant="ghost" icon="add-circle-outline" onPress={resetForm} />
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -31,35 +114,105 @@ export default function NewReportScreen() {
 
       <View style={styles.form}>
         <Text style={styles.label}>Categoría</Text>
-        <TextInput style={styles.input} value={category} onChangeText={setCategory} placeholderTextColor={colors.muted} />
+        <View style={styles.categoryGrid}>
+          {categories.map((item) => (
+            <Pressable
+              key={item}
+              accessibilityRole="button"
+              style={[styles.categoryChip, category === item && styles.categoryChipActive]}
+              onPress={() => {
+                setCategory(item);
+                setErrors((current) => ({ ...current, category: undefined }));
+              }}
+            >
+              <Text style={[styles.categoryText, category === item && styles.categoryTextActive]}>{item}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {errors.category ? <Text style={styles.errorText}>{errors.category}</Text> : null}
 
         <Text style={styles.label}>Descripción</Text>
         <TextInput
           style={[styles.input, styles.multiline]}
           value={description}
-          onChangeText={setDescription}
+          onChangeText={(value) => {
+            setDescription(value);
+            if (value.trim()) setErrors((current) => ({ ...current, description: undefined }));
+          }}
           multiline
+          maxLength={300}
           placeholder="Describe qué ocurrió y alguna referencia..."
           placeholderTextColor={colors.muted}
         />
+        <View style={styles.counterRow}>
+          {errors.description ? <Text style={styles.errorText}>{errors.description}</Text> : <View />}
+          <Text style={styles.counter}>{description.length} / 300</Text>
+        </View>
 
         <Text style={styles.label}>Ubicación o referencia</Text>
         <TextInput
           style={styles.input}
           value={location}
-          onChangeText={setLocation}
+          onChangeText={(value) => {
+            setLocation(value);
+            if (value.trim()) setErrors((current) => ({ ...current, location: undefined }));
+          }}
           placeholder="Barrio, calle o punto de referencia"
           placeholderTextColor={colors.muted}
         />
+        {errors.location ? <Text style={styles.errorText}>{errors.location}</Text> : null}
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.locationButton, pressed && styles.pressed]}
+          onPress={() => {
+            setLocation('Ubicación actual - Zacapa');
+            setErrors((current) => ({ ...current, location: undefined }));
+          }}
+        >
+          <Ionicons name="location-outline" size={18} color={colors.primary} />
+          <Text style={styles.locationButtonText}>Usar ubicación actual</Text>
+        </Pressable>
+
+        <Text style={styles.label}>Prioridad</Text>
+        <View style={styles.priorityRow}>
+          {priorityOptions.map((item) => (
+            <Pressable key={item.key} accessibilityRole="button" style={[styles.priorityChip, priority === item.key && styles.priorityChipActive]} onPress={() => setPriority(item.key)}>
+              <Text style={[styles.priorityText, priority === item.key && styles.priorityTextActive]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {errors.priority ? <Text style={styles.errorText}>{errors.priority}</Text> : null}
 
         <Text style={styles.label}>Evidencia fotográfica</Text>
-        <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={openCamera}>
-          <Ionicons name="camera-outline" size={22} color={colors.primary} />
-          <View style={styles.cameraButtonText}>
-            <Text style={styles.cameraButtonTitle}>Abrir cámara</Text>
-            <Text style={styles.cameraButtonCopy}>Abre la cámara para adjuntar evidencia al reporte.</Text>
+        {evidenceAttached ? (
+          <View style={styles.evidencePreview}>
+            <View style={styles.evidenceIcon}>
+              <Ionicons name="image-outline" size={24} color={colors.primary} />
+            </View>
+            <View style={styles.evidenceText}>
+              <Text style={styles.evidenceTitle}>Evidencia demo adjunta</Text>
+              <Text style={styles.evidenceCopy}>La fotografía es opcional en esta etapa.</Text>
+            </View>
+            <Pressable accessibilityRole="button" style={styles.removeEvidence} onPress={() => setEvidenceAttached(false)}>
+              <Text style={styles.removeEvidenceText}>Quitar evidencia</Text>
+            </Pressable>
           </View>
-        </Pressable>
+        ) : (
+          <Pressable accessibilityRole="button" style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={openCamera}>
+            <Ionicons name="camera-outline" size={22} color={colors.primary} />
+            <View style={styles.cameraButtonText}>
+              <Text style={styles.cameraButtonTitle}>Abrir cámara</Text>
+              <Text style={styles.cameraButtonCopy}>Abre la cámara para adjuntar evidencia al reporte.</Text>
+            </View>
+          </Pressable>
+        )}
+
+        <View style={styles.summary}>
+          <Text style={styles.summaryTitle}>Resumen</Text>
+          <SummaryRow label="Categoría" value={category || 'Sin seleccionar'} />
+          <SummaryRow label="Ubicación" value={location || 'Sin completar'} />
+          <SummaryRow label="Prioridad" value={getPriorityLabel(priority)} />
+        </View>
 
         <AppButton label="Enviar reporte" icon="send-outline" onPress={submit} />
         <AppButton label="Cancelar" variant="ghost" onPress={() => router.back()} />
@@ -70,14 +223,21 @@ export default function NewReportScreen() {
           {cameraPermission?.granted ? (
             <CameraView style={styles.cameraPreview} facing="back">
               <View style={styles.cameraOverlay}>
-                <Pressable style={styles.closeCamera} onPress={() => setCameraOpen(false)}>
+                <Pressable accessibilityRole="button" style={styles.closeCamera} onPress={() => setCameraOpen(false)}>
                   <Ionicons name="close" size={24} color={colors.white} />
                   <Text style={styles.closeCameraText}>Salir</Text>
                 </Pressable>
-                <Pressable style={styles.shutter} onPress={() => Alert.alert('Captura no disponible', 'El almacenamiento de fotografías aún no está configurado.') }>
+                <Pressable
+                  accessibilityRole="button"
+                  style={styles.shutter}
+                  onPress={() => {
+                    setEvidenceAttached(true);
+                    setCameraOpen(false);
+                  }}
+                >
                   <View style={styles.shutterCenter} />
                 </Pressable>
-                <Text style={styles.cameraNote}>Vista previa de cámara · sin almacenamiento</Text>
+                <Text style={styles.cameraNote}>Vista previa de cámara · evidencia demo</Text>
               </View>
             </CameraView>
           ) : (
@@ -95,6 +255,15 @@ export default function NewReportScreen() {
   );
 }
 
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.background },
   page: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: spacing.lg, gap: spacing.md },
@@ -104,11 +273,43 @@ const styles = StyleSheet.create({
   form: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.border },
   label: { color: colors.text, fontWeight: '700', marginTop: spacing.sm },
   input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontSize: 16, color: colors.text },
-  multiline: { minHeight: 120, textAlignVertical: 'top' },
+  multiline: { minHeight: 108, textAlignVertical: 'top' },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  categoryChip: { flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  categoryChipActive: { backgroundColor: colors.softGreen, borderColor: colors.primary },
+  categoryText: { color: colors.muted, fontWeight: '800', textAlign: 'center' },
+  categoryTextActive: { color: colors.primary },
+  counterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
+  counter: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  errorText: { color: colors.danger, fontSize: 12, fontWeight: '700' },
+  locationButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm },
+  locationButtonText: { color: colors.primary, fontWeight: '800' },
+  priorityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  priorityChip: { flexGrow: 1, flexBasis: 120, borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, backgroundColor: colors.surface, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  priorityChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  priorityText: { color: colors.muted, fontWeight: '800', textAlign: 'center' },
+  priorityTextActive: { color: colors.white },
   cameraButton: { minHeight: 72, backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cameraButtonText: { flex: 1 },
   cameraButtonTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cameraButtonCopy: { color: colors.muted, fontSize: 12, marginTop: spacing.xs },
+  evidencePreview: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.md },
+  evidenceIcon: { width: 44, height: 44, borderRadius: radius.sm, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  evidenceText: { flex: 1, minWidth: 180 },
+  evidenceTitle: { color: colors.primary, fontWeight: '800' },
+  evidenceCopy: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  removeEvidence: { paddingVertical: spacing.sm },
+  removeEvidenceText: { color: colors.danger, fontWeight: '800' },
+  summary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs, marginTop: spacing.sm },
+  summaryTitle: { color: colors.primary, fontSize: 16, fontWeight: '800', marginBottom: spacing.xs },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md },
+  summaryLabel: { color: colors.secondary, fontWeight: '800' },
+  summaryValue: { flex: 1, color: colors.text, fontWeight: '600', textAlign: 'right' },
+  confirmation: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.xl, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
+  confirmIcon: { width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  confirmTitle: { color: colors.primary, fontSize: 24, fontWeight: '800' },
+  confirmCopy: { color: colors.muted, lineHeight: 21 },
+  confirmDetails: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.xs },
   pressed: { opacity: 0.8 },
   cameraPage: { flex: 1, backgroundColor: '#000000' },
   cameraPreview: { flex: 1 },
