@@ -15,7 +15,7 @@ export function AppButton({ label, onPress, variant = 'primary', icon, style }: 
   const ghost = variant === 'ghost';
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondary, ghost && styles.ghost, pressed && styles.pressed, style]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondary, ghost && styles.ghost, pressed && styles.pressed, style]}>
       {icon && <Ionicons name={icon} size={20} color={secondary || ghost ? colors.primary : colors.white} />}
       <Text style={[styles.label, (secondary || ghost) && styles.secondaryLabel]}>{label}</Text>
     </Pressable>
