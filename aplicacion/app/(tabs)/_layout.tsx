@@ -5,7 +5,7 @@ import type { ComponentProps } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useState } from 'react';
 import { colors, radius, spacing } from '@/theme/tokens';
-import { useSession } from '@/context/SessionContext';
+import { useSession, type UserRole } from '@/context/SessionContext';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -19,31 +19,67 @@ const citizenNavigation = [
 
 const adminNavigation = [
   { name: 'index', title: 'Panel', icon: 'grid-outline' },
-  { name: 'reports', title: 'Gestionar reportes', icon: 'document-text-outline' },
-  { name: 'tracking', title: 'Seguimiento', icon: 'trail-sign-outline' },
+  { name: 'reports', title: 'Gestión', icon: 'document-text-outline' },
+  { name: 'tracking', title: 'Control', icon: 'analytics-outline' },
   { name: 'admin-menu', title: 'Funciones', icon: 'options-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
-const maintenanceNavigation = [
-  { name: 'index', title: 'Panel de trabajo', icon: 'construct-outline' },
-  { name: 'reports', title: 'Asignaciones', icon: 'clipboard-outline' },
-  { name: 'tracking', title: 'Seguimiento', icon: 'trail-sign-outline' },
+const maintenanceManagerNavigation = [
+  { name: 'index', title: 'Panel', icon: 'construct-outline' },
+  { name: 'reports', title: 'Asignar', icon: 'git-branch-outline' },
+  { name: 'tracking', title: 'Filtros', icon: 'funnel-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
-function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'citizen' | 'admin' | 'maintenance' }) {
-  const [expanded, setExpanded] = useState(true);
-  const { signOut } = useSession();
+const maintenanceEmployeeNavigation = [
+  { name: 'index', title: 'Tareas', icon: 'construct-outline' },
+  { name: 'reports', title: 'Recibidas', icon: 'clipboard-outline' },
+  { name: 'tracking', title: 'Avance', icon: 'trail-sign-outline' },
+  { name: 'profile', title: 'Perfil', icon: 'person-outline' }
+] satisfies { name: string; title: string; icon: IconName }[];
+
+function getRoleNavigation(role: UserRole) {
+  if (role === 'admin') return adminNavigation;
+  if (role === 'maintenance_manager') return maintenanceManagerNavigation;
+  if (role === 'maintenance_employee') return maintenanceEmployeeNavigation;
+  return citizenNavigation;
+}
+
+function getRoleMeta(role: UserRole, departmentLabel: string | null) {
   const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
+  const isMaintenance = role === 'maintenance_manager' || role === 'maintenance_employee';
+  const isMaintenanceManager = role === 'maintenance_manager';
+  const isMaintenanceEmployee = role === 'maintenance_employee';
   const isStaff = isAdmin || isMaintenance;
-  const items = isAdmin ? adminNavigation : isMaintenance ? maintenanceNavigation : citizenNavigation;
-  const accent = isMaintenance ? '#7DD3CF' : '#E7B04B';
+  return {
+    isAdmin,
+    isMaintenance,
+    isMaintenanceManager,
+    isMaintenanceEmployee,
+    isStaff,
+    background: isMaintenance ? '#0F4C5C' : isAdmin ? '#14243A' : colors.white,
+    accent: isMaintenance ? '#7DD3CF' : isAdmin ? '#E7B04B' : colors.primary,
+    muted: isStaff ? '#B9C5D5' : colors.muted,
+    subtitle: isAdmin
+      ? 'Administración general'
+      : isMaintenanceManager
+        ? `Encargado · ${departmentLabel ?? 'Departamento'}`
+        : isMaintenanceEmployee
+          ? `Empleado · ${departmentLabel ?? 'Departamento'}`
+          : 'Portal ciudadano'
+  };
+}
+
+function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
+  const [expanded, setExpanded] = useState(true);
+  const { signOut, departmentLabel } = useSession();
+  const meta = getRoleMeta(role, departmentLabel);
+  const items = getRoleNavigation(role);
   const activeRoute = state.routes[state.index]?.name;
 
   return (
-    <View style={[styles.sidebar, !expanded && styles.sidebarCollapsed, isStaff && styles.adminSidebar, isMaintenance && styles.maintenanceSidebar]}>
+    <View style={[styles.sidebar, !expanded && styles.sidebarCollapsed, meta.isStaff && styles.adminSidebar, meta.isMaintenance && styles.maintenanceSidebar]}>
       <View style={[styles.brand, !expanded && styles.brandCollapsed]}>
         <Pressable
           accessibilityRole="button"
@@ -51,17 +87,17 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'ci
           style={[styles.logoButton, !expanded && styles.logoButtonCollapsed]}
           onPress={() => setExpanded((current) => !current)}
         >
-          <View style={[styles.logo, isStaff && styles.adminLogo]}>
+          <View style={[styles.logo, meta.isStaff && styles.adminLogo]}>
             <Image source={require('../../assets/images/zacapp-logo-dark.png')} style={styles.logoImage} resizeMode="cover" />
           </View>
-          <View style={[styles.toggleHint, isStaff && styles.adminToggleHint, isMaintenance && styles.maintenanceToggleHint]}>
-            <Ionicons name={expanded ? 'chevron-back' : 'chevron-forward'} size={11} color={isStaff ? '#14243A' : colors.white} />
+          <View style={[styles.toggleHint, meta.isStaff && styles.adminToggleHint, meta.isMaintenance && styles.maintenanceToggleHint]}>
+            <Ionicons name={expanded ? 'chevron-back' : 'chevron-forward'} size={11} color={meta.isStaff ? '#14243A' : colors.white} />
           </View>
         </Pressable>
         {expanded && (
           <View style={styles.brandText}>
-            <Text style={[styles.brandTitle, isStaff && styles.adminText]}>ZacApp</Text>
-            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{isAdmin ? 'Superadministración' : isMaintenance ? 'Mantenimiento · Agua' : 'Portal ciudadano'}</Text>
+            <Text style={[styles.brandTitle, meta.isStaff && styles.adminText]}>ZacApp</Text>
+            <Text style={[styles.brandSubtitle, meta.isStaff && styles.adminMuted]}>{meta.subtitle}</Text>
           </View>
         )}
       </View>
@@ -76,14 +112,14 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'ci
               key={item.name}
               accessibilityRole="button"
               accessibilityLabel={item.title}
-              style={[styles.navItem, !expanded && styles.navItemCollapsed, active && styles.navItemActive, active && isStaff && styles.adminNavItemActive]}
+              style={[styles.navItem, !expanded && styles.navItemCollapsed, active && styles.navItemActive, active && meta.isStaff && styles.adminNavItemActive]}
               onPress={() => {
                 const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
                 if (!event.defaultPrevented) navigation.navigate(route.name);
               }}
             >
-              <Ionicons name={item.icon} size={21} color={active ? (isStaff ? accent : colors.primary) : (isStaff ? '#B9C5D5' : colors.muted)} />
-              {expanded && <Text style={[styles.navText, isStaff && styles.adminMuted, active && styles.navTextActive, active && isStaff && { color: accent }]}>{item.title}</Text>}
+              <Ionicons name={item.icon} size={21} color={active ? (meta.isStaff ? meta.accent : colors.primary) : (meta.isStaff ? '#B9C5D5' : colors.muted)} />
+              {expanded && <Text style={[styles.navText, meta.isStaff && styles.adminMuted, active && styles.navTextActive, active && meta.isStaff && { color: meta.accent }]}>{item.title}</Text>}
             </Pressable>
           );
         })}
@@ -92,24 +128,58 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'ci
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Cerrar sesión"
-        style={[styles.logoutButton, !expanded && styles.navItemCollapsed, isStaff && styles.adminLogoutButton]}
+        style={[styles.logoutButton, !expanded && styles.navItemCollapsed, meta.isStaff && styles.adminLogoutButton]}
         onPress={() => {
           signOut();
           router.replace('/login');
         }}
       >
-        <Ionicons name="log-out-outline" size={21} color={isStaff ? accent : colors.danger} />
-        {expanded && <Text style={[styles.logoutText, isStaff && { color: accent }]}>Cerrar sesión</Text>}
+        <Ionicons name="log-out-outline" size={21} color={meta.isStaff ? meta.accent : colors.danger} />
+        {expanded && <Text style={[styles.logoutText, meta.isStaff && { color: meta.accent }]}>Cerrar sesión</Text>}
       </Pressable>
 
     </View>
   );
 }
 
+function NativeBottomBar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
+  const { departmentLabel } = useSession();
+  const meta = getRoleMeta(role, departmentLabel);
+  const items = getRoleNavigation(role);
+  const activeRoute = state.routes[state.index]?.name;
+
+  return (
+    <View style={[styles.nativeBar, { backgroundColor: meta.background, borderTopColor: meta.isStaff ? '#2B4360' : colors.border }]}>
+      {items.map((item) => {
+        const route = state.routes.find((candidate) => candidate.name === item.name);
+        if (!route) return null;
+        const active = activeRoute === item.name;
+        return (
+          <Pressable
+            key={item.name}
+            accessibilityRole="button"
+            accessibilityLabel={item.title}
+            style={[styles.nativeItem, active && (meta.isStaff ? styles.nativeItemStaffActive : styles.nativeItemActive)]}
+            onPress={() => {
+              const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+              if (!event.defaultPrevented) navigation.navigate(route.name);
+            }}
+          >
+            <Ionicons name={item.icon} size={22} color={active ? (meta.isStaff ? meta.accent : colors.primary) : meta.muted} />
+            <Text numberOfLines={1} style={[styles.nativeLabel, { color: active ? (meta.isStaff ? meta.accent : colors.primary) : meta.muted }]}>{item.title}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export default function TabsLayout() {
-  const { role } = useSession();
+  const { role, signOut } = useSession();
+  const isMaintenance = role === 'maintenance_manager' || role === 'maintenance_employee';
+  const isMaintenanceManager = role === 'maintenance_manager';
+  const isMaintenanceEmployee = role === 'maintenance_employee';
   const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
   const isStaff = isAdmin || isMaintenance;
   const isWeb = Platform.OS === 'web';
   const navigationBackground = isMaintenance ? '#0F4C5C' : isAdmin ? '#14243A' : colors.white;
@@ -118,11 +188,40 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      tabBar={isWeb ? (props) => <WebSidebar {...props} role={role} /> : undefined}
-      screenOptions={{
+      tabBar={(props) => isWeb ? <WebSidebar {...props} role={role} /> : <NativeBottomBar {...props} role={role} />}
+      screenOptions={({ route }) => ({
         headerStyle: { backgroundColor: navigationBackground },
         headerTintColor: colors.white,
         headerTitleStyle: { fontWeight: '800' },
+        headerLeft: !isWeb && isStaff && route.name !== 'index'
+          ? () => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Regresar al panel"
+                style={styles.headerAction}
+                onPress={() => router.replace('/(tabs)')}
+              >
+                <Ionicons name="arrow-back" size={20} color={colors.white} />
+                <Text style={styles.headerActionText}>Panel</Text>
+              </Pressable>
+            )
+          : undefined,
+        headerRight: !isWeb && isStaff
+          ? () => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar sesión"
+                style={styles.headerAction}
+                onPress={() => {
+                  signOut();
+                  router.replace('/login');
+                }}
+              >
+                <Ionicons name="log-out-outline" size={20} color={colors.white} />
+                <Text style={styles.headerActionText}>Salir</Text>
+              </Pressable>
+            )
+          : undefined,
         tabBarActiveTintColor: navigationAccent,
         tabBarInactiveTintColor: navigationMuted,
         tabBarActiveBackgroundColor: isWeb ? (isStaff ? '#203753' : colors.softGreen) : undefined,
@@ -145,13 +244,13 @@ export default function TabsLayout() {
             },
         tabBarItemStyle: isWeb ? { minHeight: 54, maxHeight: 54, borderRadius: 12, marginVertical: 4 } : undefined,
         tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : undefined
-      }}
+      })}
     >
-      <Tabs.Screen name="reports" options={{ title: isAdmin ? 'Gestionar reportes' : isMaintenance ? 'Asignaciones' : 'Mis reportes', href: isAdmin && !isWeb ? null : '/reports', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ title: 'Seguimiento', href: isAdmin && !isWeb ? null : '/tracking', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Trabajo' : 'Inicio', tabBarItemStyle: !isWeb && !isStaff ? styles.centerTabItem : undefined, tabBarIcon: ({ color, size }) => !isWeb && !isStaff ? <View style={styles.centerTabIcon}><Ionicons name="home" color={colors.white} size={size + 2} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : 'home-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="reports" options={{ title: isAdmin ? 'Gestión de reportes' : isMaintenanceManager ? 'Asignar tareas' : isMaintenanceEmployee ? 'Tareas recibidas' : 'Mis reportes', href: '/reports', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenanceManager ? 'git-branch-outline' : isMaintenanceEmployee ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ title: isAdmin ? 'Control' : isMaintenanceManager ? 'Filtros' : isMaintenanceEmployee ? 'Avance' : 'Seguimiento', href: '/tracking', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenanceManager ? 'funnel-outline' : 'trail-sign-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenanceManager ? 'Panel' : isMaintenanceEmployee ? 'Tareas' : 'Inicio', tabBarItemStyle: !isWeb && !isStaff ? styles.centerTabItem : undefined, tabBarIcon: ({ color, size }) => !isWeb && !isStaff ? <View style={styles.centerTabIcon}><Ionicons name="home" color={colors.white} size={size + 2} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : 'home-outline'} color={color} size={size} /> }} />
       <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="profile" options={{ title: 'Perfil', href: isAdmin && !isWeb ? null : '/profile', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="profile" options={{ title: 'Perfil', href: '/profile', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
       <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isAdmin ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={color} size={size} /> }} />
     </Tabs>
   );
@@ -188,6 +287,13 @@ const styles = StyleSheet.create({
   logoutButton: { minHeight: 48, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.dangerSoft },
   adminLogoutButton: { backgroundColor: '#203753' },
   logoutText: { color: colors.danger, fontSize: 14, fontWeight: '800' },
+  headerAction: { minHeight: 40, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  headerActionText: { color: colors.white, fontSize: 13, fontWeight: '800' },
+  nativeBar: { minHeight: 74, paddingHorizontal: spacing.xs, paddingTop: spacing.xs, paddingBottom: spacing.sm, borderTopWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' },
+  nativeItem: { flex: 1, minHeight: 56, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', gap: 3, paddingHorizontal: 2 },
+  nativeItemActive: { backgroundColor: colors.softGreen },
+  nativeItemStaffActive: { backgroundColor: '#203753' },
+  nativeLabel: { fontSize: 11, fontWeight: '800' },
   centerTabItem: { marginTop: -10 },
   centerTabIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, borderWidth: 4, borderColor: colors.white, elevation: 5 },
 });

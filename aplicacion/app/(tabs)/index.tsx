@@ -30,8 +30,14 @@ const adminActions = [
 ] as const;
 
 const maintenanceActions = [
-  { title: 'Asignaciones', copy: 'Consultar trabajos del área de Agua potable', icon: 'clipboard-outline', route: '/reports' },
-  { title: 'Seguimiento', copy: 'Actualizar el avance de las atenciones', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Asignar tareas', copy: 'Enviar cada incidente al grupo o empleado correcto', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Filtros', copy: 'Buscar pendientes, en proceso y resueltos', icon: 'funnel-outline', route: '/tracking' },
+  { title: 'Perfil', copy: 'Revisar cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const maintenanceEmployeeActions = [
+  { title: 'Tareas recibidas', copy: 'Consultar incidentes asignados a tu usuario', icon: 'clipboard-outline', route: '/reports' },
+  { title: 'Actualizar avance', copy: 'Revisar etapas y estado de atención', icon: 'trail-sign-outline', route: '/tracking' },
   { title: 'Perfil', copy: 'Revisar cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
@@ -45,12 +51,16 @@ const maintenanceSummary = [
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
-  const { role } = useSession();
+  const { role, department, departmentLabel } = useSession();
   const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
+  const isMaintenance = role === 'maintenance_manager' || role === 'maintenance_employee';
+  const isMaintenanceManager = role === 'maintenance_manager';
+  const isMaintenanceEmployee = role === 'maintenance_employee';
   const isStaff = isAdmin || isMaintenance;
-  const visibleActions = isAdmin ? adminActions : isMaintenance ? maintenanceActions : actions;
+  const visibleActions = isAdmin ? adminActions : isMaintenanceManager ? maintenanceActions : isMaintenanceEmployee ? maintenanceEmployeeActions : actions;
   const visibleSummary = isMaintenance ? maintenanceSummary : summary;
+  const visibleIncidents = isMaintenance ? mockIncidents.filter((incident) => incident.category === department) : mockIncidents;
+  const areaName = departmentLabel ?? department ?? 'departamento asignado';
 
   return (
     <ScrollView style={[styles.scroll, isStaff && styles.adminScroll]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
@@ -58,9 +68,9 @@ export default function HomeScreen() {
         <View style={styles.main}>
           <View style={[styles.header, isAdmin && styles.adminHeader, isMaintenance && styles.maintenanceHeader]}>
             <View style={styles.headerText}>
-              <Text style={[styles.eyebrow, isStaff && styles.adminEyebrow, isMaintenance && styles.maintenanceEyebrow]}>{isAdmin ? 'SUPERADMINISTRACIÓN' : isMaintenance ? 'MANTENIMIENTO' : 'BIENVENIDO'}</Text>
-              <Text style={styles.heading}>{isAdmin ? 'Panel administrativo' : isMaintenance ? 'Panel de Agua potable' : 'Dashboard ZacApp'}</Text>
-              <Text style={styles.copy}>{isAdmin ? 'Resumen general para gestionar reportes y funciones del sistema.' : isMaintenance ? 'Asignaciones recibidas por el departamento y estado de atención.' : 'Resumen visual de reportes comunitarios y accesos principales.'}</Text>
+              <Text style={[styles.eyebrow, isStaff && styles.adminEyebrow, isMaintenance && styles.maintenanceEyebrow]}>{isAdmin ? 'ADMINISTRACIÓN' : isMaintenanceManager ? 'MANTENIMIENTO · ENCARGADO' : isMaintenanceEmployee ? 'MANTENIMIENTO · EMPLEADO' : 'BIENVENIDO'}</Text>
+              <Text style={styles.heading}>{isAdmin ? 'Panel administrativo' : isMaintenance ? `Panel de ${areaName}` : 'Dashboard ZacApp'}</Text>
+              <Text style={styles.copy}>{isAdmin ? 'Gestión general de reportes, mantenimiento, usuarios, áreas y funciones del sistema.' : isMaintenanceManager ? 'Incidencias recibidas por tu departamento, listas para asignar a grupos o empleados y dar seguimiento.' : isMaintenanceEmployee ? 'Tareas asignadas a tu usuario para revisar y actualizar avances, sin funciones de asignación.' : 'Resumen visual de reportes comunitarios y accesos principales.'}</Text>
             </View>
             {!isStaff && <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={isWide ? styles.headerButton : undefined} />}
           </View>
@@ -77,7 +87,7 @@ export default function HomeScreen() {
 
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Accesos rápidos</Text>
-            <Text style={styles.sectionMeta}>Resumen general</Text>
+            <Text style={styles.sectionMeta}>{isMaintenance ? areaName : 'Resumen general'}</Text>
           </View>
           <View style={styles.actionsGrid}>
             {visibleActions.map((item) => (
@@ -97,7 +107,14 @@ export default function HomeScreen() {
             <Text style={styles.sectionMeta}>Últimos movimientos</Text>
           </View>
           <View style={styles.incidentList}>
-            {mockIncidents.slice(0, 3).map((incident) => <IncidentCard key={incident.id} incident={incident} />)}
+            {visibleIncidents.slice(0, 3).map((incident) => <IncidentCard key={incident.id} incident={incident} />)}
+            {visibleIncidents.length === 0 && (
+              <View style={styles.emptyCard}>
+                <Ionicons name="checkmark-circle-outline" size={24} color={colors.secondary} />
+                <Text style={styles.emptyTitle}>Sin incidentes asignados</Text>
+                <Text style={styles.emptyCopy}>Cuando administración derive un caso a {areaName}, aparecerá en este panel.</Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -140,5 +157,8 @@ const styles = StyleSheet.create({
   actionText: { flex: 1 },
   actionTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   actionCopy: { color: colors.muted, marginTop: spacing.xs },
-  incidentList: { gap: spacing.md }
+  incidentList: { gap: spacing.md },
+  emptyCard: { backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.xs, alignItems: 'flex-start' },
+  emptyTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
+  emptyCopy: { color: colors.muted, lineHeight: 20 }
 });

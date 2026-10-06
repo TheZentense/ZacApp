@@ -10,6 +10,8 @@ export default function NewReportScreen() {
   const [category, setCategory] = useState('Alumbrado público');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
+  const [gpsAuthorized, setGpsAuthorized] = useState(false);
+  const [photoAttached, setPhotoAttached] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
@@ -19,6 +21,8 @@ export default function NewReportScreen() {
   };
   const submit = () => {
     if (!description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Agrega una descripción y ubicación.');
+    if (!gpsAuthorized) return Alert.alert('GPS requerido', 'Autoriza compartir la ubicación aproximada del incidente para continuar.');
+    if (!photoAttached) return Alert.alert('Imagen requerida', 'Adjunta una imagen de evidencia para registrar el reporte.');
     Alert.alert('Reporte registrado', 'Tu reporte se registró correctamente.', [{ text: 'Aceptar', onPress: () => router.back() }]);
   };
 
@@ -52,13 +56,28 @@ export default function NewReportScreen() {
           placeholderTextColor={colors.muted}
         />
 
+        <Text style={styles.label}>Ubicación GPS aproximada</Text>
+        <Pressable style={({ pressed }) => [styles.permissionCard, gpsAuthorized && styles.permissionCardActive, pressed && styles.pressed]} onPress={() => setGpsAuthorized(true)}>
+          <View style={[styles.permissionIcon, gpsAuthorized && styles.permissionIconActive]}>
+            <Ionicons name={gpsAuthorized ? 'checkmark-circle' : 'navigate-outline'} size={24} color={gpsAuthorized ? colors.white : colors.primary} />
+          </View>
+          <View style={styles.permissionText}>
+            <Text style={styles.permissionTitle}>{gpsAuthorized ? 'GPS temporal autorizado' : 'Solicitar GPS del incidente'}</Text>
+            <Text style={styles.permissionCopy}>Demo visual: el usuario autoriza compartir por este momento la ubicación aproximada necesaria para atender el incidente.</Text>
+          </View>
+        </Pressable>
+
         <Text style={styles.label}>Evidencia fotográfica</Text>
         <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={openCamera}>
-          <Ionicons name="camera-outline" size={22} color={colors.primary} />
+          <Ionicons name={photoAttached ? 'image' : 'camera-outline'} size={22} color={colors.primary} />
           <View style={styles.cameraButtonText}>
-            <Text style={styles.cameraButtonTitle}>Abrir cámara</Text>
-            <Text style={styles.cameraButtonCopy}>Abre la cámara para adjuntar evidencia al reporte.</Text>
+            <Text style={styles.cameraButtonTitle}>{photoAttached ? 'Imagen adjunta' : 'Abrir cámara o subir imagen'}</Text>
+            <Text style={styles.cameraButtonCopy}>{photoAttached ? 'La evidencia de demostración quedó asociada al reporte.' : 'La imagen es obligatoria para demostrar el estado del incidente.'}</Text>
           </View>
+        </Pressable>
+        <Pressable style={({ pressed }) => [styles.demoUpload, photoAttached && styles.demoUploadActive, pressed && styles.pressed]} onPress={() => setPhotoAttached(true)}>
+          <Ionicons name={photoAttached ? 'checkmark-circle' : 'cloud-upload-outline'} size={19} color={photoAttached ? colors.white : colors.primary} />
+          <Text style={[styles.demoUploadText, photoAttached && styles.demoUploadTextActive]}>{photoAttached ? 'Evidencia cargada' : 'Usar imagen de ejemplo'}</Text>
         </Pressable>
 
         <AppButton label="Enviar reporte" icon="send-outline" onPress={submit} />
@@ -74,17 +93,17 @@ export default function NewReportScreen() {
                   <Ionicons name="close" size={24} color={colors.white} />
                   <Text style={styles.closeCameraText}>Salir</Text>
                 </Pressable>
-                <Pressable style={styles.shutter} onPress={() => Alert.alert('Captura no disponible', 'El almacenamiento de fotografías aún no está configurado.') }>
+                <Pressable style={styles.shutter} onPress={() => { setPhotoAttached(true); setCameraOpen(false); Alert.alert('Imagen adjunta', 'Se agregó una evidencia de demostración al reporte.'); }}>
                   <View style={styles.shutterCenter} />
                 </Pressable>
-                <Text style={styles.cameraNote}>Vista previa de cámara · sin almacenamiento</Text>
+                <Text style={styles.cameraNote}>Vista previa de cámara · evidencia demo</Text>
               </View>
             </CameraView>
           ) : (
             <View style={styles.permissionPage}>
               <Ionicons name="camera-outline" size={52} color={colors.primary} />
-              <Text style={styles.permissionTitle}>Acceso a la cámara</Text>
-              <Text style={styles.permissionCopy}>ZacApp necesita permiso para utilizar la cámara del dispositivo.</Text>
+              <Text style={styles.cameraPermissionTitle}>Acceso a la cámara</Text>
+              <Text style={styles.cameraPermissionCopy}>ZacApp necesita permiso para utilizar la cámara del dispositivo.</Text>
               <AppButton label="Permitir cámara" icon="camera-outline" onPress={requestCameraPermission} />
               <AppButton label="Salir" variant="ghost" onPress={() => setCameraOpen(false)} />
             </View>
@@ -109,6 +128,17 @@ const styles = StyleSheet.create({
   cameraButtonText: { flex: 1 },
   cameraButtonTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cameraButtonCopy: { color: colors.muted, fontSize: 12, marginTop: spacing.xs },
+  permissionCard: { minHeight: 86, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  permissionCardActive: { borderColor: colors.primary, backgroundColor: colors.softGreen },
+  permissionIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  permissionIconActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  permissionText: { flex: 1 },
+  permissionTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
+  permissionCopy: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.xs },
+  demoUpload: { minHeight: 44, alignSelf: 'flex-start', borderRadius: radius.pill, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  demoUploadActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  demoUploadText: { color: colors.primary, fontWeight: '800' },
+  demoUploadTextActive: { color: colors.white },
   pressed: { opacity: 0.8 },
   cameraPage: { flex: 1, backgroundColor: '#000000' },
   cameraPreview: { flex: 1 },
@@ -119,6 +149,6 @@ const styles = StyleSheet.create({
   shutterCenter: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.white },
   cameraNote: { color: colors.white, backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginTop: spacing.lg, overflow: 'hidden' },
   permissionPage: { flex: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.md, backgroundColor: colors.background },
-  permissionTitle: { color: colors.primary, fontSize: 26, fontWeight: '800', textAlign: 'center' },
-  permissionCopy: { color: colors.muted, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: spacing.md }
+  cameraPermissionTitle: { color: colors.primary, fontSize: 26, fontWeight: '800', textAlign: 'center' },
+  cameraPermissionCopy: { color: colors.muted, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: spacing.md }
 });

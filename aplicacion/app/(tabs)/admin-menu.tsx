@@ -6,7 +6,8 @@ import { colors, radius, spacing } from '@/theme/tokens';
 const functions = [
   { title: 'Gestionar reportes', copy: 'Consultar y actualizar incidencias', icon: 'document-text-outline', route: '/reports' },
   { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Asignaciones', copy: 'Distribuir reportes entre las áreas responsables', icon: 'git-branch-outline' },
+  { title: 'Mantenimiento', copy: 'Administrar encargados, empleados y departamentos', icon: 'construct-outline' },
+  { title: 'Asignaciones', copy: 'Derivar reportes y corregir responsables por error', icon: 'git-branch-outline', route: '/reports' },
   { title: 'Usuarios', copy: 'Administrar cuentas y accesos', icon: 'people-outline' },
   { title: 'Roles y permisos', copy: 'Definir funciones del personal', icon: 'shield-checkmark-outline' },
   { title: 'Categorías', copy: 'Organizar los tipos de incidencias', icon: 'pricetags-outline' },

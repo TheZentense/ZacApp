@@ -5,26 +5,28 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 
 export default function ProfileScreen() {
-  const { role, email, department, signOut } = useSession();
+  const { role, email, department, departmentLabel, signOut } = useSession();
   const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
+  const isMaintenanceManager = role === 'maintenance_manager';
+  const isMaintenanceEmployee = role === 'maintenance_employee';
+  const isMaintenance = isMaintenanceManager || isMaintenanceEmployee;
 
   return (
     <View style={styles.page}>
       <View style={styles.content}>
         <View style={styles.profileHeader}>
-          <View style={styles.avatar}><Text style={styles.initials}>{isAdmin ? 'SA' : isMaintenance ? 'MA' : 'CZ'}</Text></View>
+          <View style={styles.avatar}><Text style={styles.initials}>{isAdmin ? 'AD' : isMaintenanceManager ? 'ME' : isMaintenanceEmployee ? 'MT' : 'CZ'}</Text></View>
           <View style={styles.identity}>
-            <Text style={styles.name}>{isAdmin ? 'Superadministrador ZacApp' : isMaintenance ? 'Personal de mantenimiento' : 'Ciudadano ZacApp'}</Text>
-            <Text style={styles.role}>{isAdmin ? 'Superadministrador · Zacapa' : isMaintenance ? `${department} · Zacapa` : 'Ciudadano · Zacapa'}</Text>
+            <Text style={styles.name}>{isAdmin ? 'Administrador ZacApp' : isMaintenanceManager ? 'Encargado de mantenimiento' : isMaintenanceEmployee ? 'Empleado de mantenimiento' : 'Ciudadano ZacApp'}</Text>
+            <Text style={styles.role}>{isAdmin ? 'Administración general · Zacapa' : isMaintenance ? `${departmentLabel ?? department} · Zacapa` : 'Ciudadano · Zacapa'}</Text>
           </View>
         </View>
 
         <View style={styles.card}>
           <InfoRow label="Correo" value={email} />
           <InfoRow label="Municipio" value="Zacapa" />
-          <InfoRow label={isAdmin || isMaintenance ? 'Área' : 'Reportes activos'} value={isAdmin ? 'Administración general' : isMaintenance ? department ?? 'Mantenimiento' : '8 en proceso'} />
-          <InfoRow label="Rol actual" value={isAdmin ? 'Superadministrador' : isMaintenance ? 'Mantenimiento' : 'Ciudadano'} />
+          <InfoRow label={isAdmin || isMaintenance ? 'Área' : 'Reportes activos'} value={isAdmin ? 'Administración general' : isMaintenance ? departmentLabel ?? department ?? 'Mantenimiento' : '8 en proceso'} />
+          <InfoRow label="Rol actual" value={isAdmin ? 'Administrador' : isMaintenanceManager ? 'Mantenimiento encargado' : isMaintenanceEmployee ? 'Mantenimiento empleado' : 'Ciudadano'} />
         </View>
 
         <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={() => { signOut(); router.replace('/login'); }} />

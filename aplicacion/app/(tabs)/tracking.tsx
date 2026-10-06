@@ -15,7 +15,9 @@ const steps = [
 ];
 
 export default function TrackingScreen() {
-  const { department } = useSession();
+  const { role, department, departmentLabel } = useSession();
+  const isMaintenanceManager = role === 'maintenance_manager';
+  const isMaintenanceEmployee = role === 'maintenance_employee';
   const [category, setCategory] = useState('Todas');
   const [selected, setSelected] = useState<Incident | null>(null);
   const availableIncidents = useMemo(() => mockIncidents.filter((item) => !department || item.category === department), [department]);
@@ -23,7 +25,10 @@ export default function TrackingScreen() {
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
   return <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-    <View style={styles.header}><Text style={styles.title}>Seguimiento</Text><Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : 'Selecciona una categoría y abre el reporte que deseas consultar.'}</Text></View>
+    <View style={styles.header}>
+      <Text style={styles.title}>{isMaintenanceManager ? `Filtros · ${departmentLabel ?? department}` : isMaintenanceEmployee ? `Avance · ${departmentLabel ?? department}` : role === 'admin' ? 'Control de atención' : 'Seguimiento'}</Text>
+      <Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : isMaintenanceManager ? 'Filtra y prioriza los incidentes que llegaron a tu departamento.' : isMaintenanceEmployee ? 'Revisa el avance de las tareas asignadas a tu usuario.' : role === 'admin' ? 'Revisa el estado por área responsable y valida avances.' : 'Selecciona una categoría y abre el reporte que deseas consultar.'}</Text>
+    </View>
     {selected ? <>
       <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={colors.primary} /><Text style={styles.backText}>Elegir otro reporte</Text></Pressable>
       <View style={styles.caseCard}><Text style={styles.code}>{selected.code}</Text><Text style={styles.caseTitle}>{selected.title}</Text><Text style={styles.meta}>{selected.category} · {selected.location}</Text></View>
@@ -35,6 +40,7 @@ export default function TrackingScreen() {
     </> : <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && styles.filterActive]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
       <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View>
+      {incidents.length === 0 && <Text style={styles.empty}>No hay incidentes disponibles para este filtro.</Text>}
     </>}
   </ScrollView>;
 }
@@ -64,5 +70,6 @@ const styles = StyleSheet.create({
   stepContent: { flex: 1, paddingBottom: spacing.md },
   stepTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   stepDetail: { color: colors.muted, marginTop: spacing.xs, lineHeight: 20 },
-  stepLine: { position: 'absolute', left: -31, top: 40, bottom: -10, width: 2, backgroundColor: colors.border }
+  stepLine: { position: 'absolute', left: -31, top: 40, bottom: -10, width: 2, backgroundColor: colors.border },
+  empty: { color: colors.muted, textAlign: 'center', paddingVertical: spacing.xl }
 });
