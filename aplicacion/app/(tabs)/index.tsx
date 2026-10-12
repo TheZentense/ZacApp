@@ -1,12 +1,16 @@
+import { useMemo } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { IncidentCard } from '@/components/IncidentCard';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState, LoadingState } from '@/components/DataState';
 import { useSession, UserRole } from '@/context/SessionContext';
-import { mockIncidents } from '@/data/mockIncidents';
+import { useReports } from '@/hooks/useReports';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { roleVisuals } from '@/theme/roles';
+import type { Incident } from '@/types/domain';
 
 type Route = '/reports' | '/tracking' | '/admin-menu' | '/profile';
 type Dashboard = {
@@ -73,13 +77,59 @@ const dashboards: Record<UserRole, Dashboard> = {
   }
 };
 
+function buildReportStats(role: UserRole, incidents: Incident[]): Dashboard['stats'] {
+  const count = (...statuses: Incident['status'][]) => incidents.filter((incident) => statuses.includes(incident.status)).length.toString();
+  const closed = count('CERRADO');
+  const active = count('REGISTRADO', 'EN_REVISION', 'VALIDADO', 'ASIGNADO', 'EN_ATENCION', 'POR_VERIFICAR');
+
+  if (role === 'citizen') return [
+    { label: 'En proceso', value: active, icon: 'construct-outline' },
+    { label: 'Resueltos', value: closed, icon: 'checkmark-circle-outline' },
+    { label: 'Total enviados', value: incidents.length.toString(), icon: 'document-text-outline' }
+  ];
+  if (role === 'maintenance') return [
+    { label: 'Pendientes', value: count('ASIGNADO'), icon: 'time-outline' },
+    { label: 'En atención', value: count('EN_ATENCION', 'POR_VERIFICAR'), icon: 'construct-outline' },
+    { label: 'Completadas', value: closed, icon: 'checkmark-circle-outline' }
+  ];
+  if (role === 'employee') return [
+    { label: 'Por revisar', value: count('REGISTRADO', 'EN_REVISION'), icon: 'eye-outline' },
+    { label: 'Validados', value: count('VALIDADO'), icon: 'checkmark-done-outline' },
+    { label: 'Canalizados', value: count('ASIGNADO', 'EN_ATENCION', 'POR_VERIFICAR', 'CERRADO'), icon: 'git-branch-outline' }
+  ];
+  if (role === 'superadmin') return [
+    { label: 'Reportes totales', value: incidents.length.toString(), icon: 'documents-outline' },
+    { label: 'En proceso', value: active, icon: 'pulse-outline' },
+    { label: 'Cerrados', value: closed, icon: 'checkmark-circle-outline' }
+  ];
+  return [
+    { label: 'Sin asignar', value: count('REGISTRADO', 'EN_REVISION', 'VALIDADO'), icon: 'alert-circle-outline' },
+    { label: 'En atención', value: count('ASIGNADO', 'EN_ATENCION', 'POR_VERIFICAR'), icon: 'construct-outline' },
+    { label: 'Cerrados', value: closed, icon: 'checkmark-circle-outline' }
+  ];
+}
+
+function buildReportPulse(role: UserRole, incidents: Incident[], fallback: Dashboard['pulse']): Dashboard['pulse'] {
+  if (!incidents.length) return { value: '0%', label: role === 'citizen' ? 'de tus reportes resueltos' : 'de casos cerrados', note: 'La actividad aparecerá conforme se registren casos' };
+
+  const closed = incidents.filter((incident) => incident.status === 'CERRADO').length;
+  const inProgress = incidents.filter((incident) => ['ASIGNADO', 'EN_ATENCION', 'POR_VERIFICAR'].includes(incident.status)).length;
+  const value = role === 'maintenance' ? Math.round((closed / incidents.length) * 100) : Math.round(((closed + inProgress) / incidents.length) * 100);
+  const label = role === 'maintenance' ? 'de asignaciones completadas' : role === 'citizen' ? 'de tus reportes atendidos' : 'de casos atendidos o en proceso';
+  const note = role === 'citizen' ? `${incidents.length} ${incidents.length === 1 ? 'reporte registrado' : 'reportes registrados'}` : `${inProgress} ${inProgress === 1 ? 'caso en atención' : 'casos en atención'}`;
+  return { ...fallback, value: `${value}%`, label, note };
+}
+
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const { role, department } = useSession();
   const content = dashboards[role];
   const visual = roleVisuals[role];
   const isWide = width >= 900;
-  const visibleIncidents = mockIncidents.filter((incident) => department ? incident.category === department : role === 'citizen' ? incident.id !== '1' : true).slice(0, 2);
+  const { incidents, isLoading, error, reload } = useReports();
+  const visibleIncidents = incidents.slice(0, 2);
+  const reportStats = useMemo(() => buildReportStats(role, incidents), [incidents, role]);
+  const reportPulse = useMemo(() => buildReportPulse(role, incidents, content.pulse), [content.pulse, incidents, role]);
 
   return (
     <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
@@ -106,10 +156,10 @@ export default function HomeScreen() {
               <View style={[styles.liveDot, { backgroundColor: visual.accent }]} />
               <Text style={styles.pulseKicker}>PULSO DE ZACAPA</Text>
             </View>
-            <Text style={[styles.pulseValue, { color: visual.accent }]}>{content.pulse.value}</Text>
-            <Text style={styles.pulseLabel}>{content.pulse.label}</Text>
+            <Text style={[styles.pulseValue, { color: visual.accent }]}>{isLoading ? '—' : reportPulse.value}</Text>
+            <Text style={styles.pulseLabel}>{reportPulse.label}</Text>
             <View style={styles.pulseDivider} />
-            <Text style={styles.pulseNote}>{content.pulse.note}</Text>
+            <Text style={styles.pulseNote}>{error ? 'No fue posible actualizar el indicador' : reportPulse.note}</Text>
           </View>
         </View>
 
@@ -121,7 +171,7 @@ export default function HomeScreen() {
           <View style={styles.contextItem}><Ionicons name="shield-checkmark-outline" size={17} color={visual.primary} /><Text style={styles.contextText}>Sesión protegida</Text></View>
         </View>
 
-        <View style={styles.statsGrid}>{content.stats.map((item, index) => (
+        <View style={styles.statsGrid}>{reportStats.map((item, index) => (
           <View key={item.label} style={styles.stat}>
             <View style={[styles.statRail, { backgroundColor: index === 0 ? visual.accent : visual.primary }]} />
             <View style={styles.statBody}>
@@ -146,7 +196,7 @@ export default function HomeScreen() {
             <View><Text style={styles.sectionKicker}>MOVIMIENTO RECIENTE</Text><Text style={styles.sectionTitle}>{content.activity}</Text></View>
             <Pressable style={[styles.viewAll, { borderColor: visual.primary }]} onPress={() => router.push('/reports')}><Text style={[styles.sectionLink, { color: visual.primary }]}>Ver todos</Text><Ionicons name="arrow-forward" size={15} color={visual.primary} /></Pressable>
           </View>
-          <View style={styles.incidentList}>{visibleIncidents.map((incident) => <IncidentCard key={incident.id} incident={incident} compact />)}</View>
+          <View style={styles.incidentList}>{isLoading ? <LoadingState label="Actualizando actividad..." /> : error ? <ErrorState description={error} onRetry={reload} /> : visibleIncidents.length ? visibleIncidents.map((incident) => <IncidentCard key={incident.id} incident={incident} compact />) : <EmptyState title="Aún no hay actividad" description={role === 'citizen' ? 'Tus reportes aparecerán aquí después de registrarlos.' : 'Los casos disponibles aparecerán en este espacio.'} />}</View>
         </View>
       </View>
     </ScrollView>

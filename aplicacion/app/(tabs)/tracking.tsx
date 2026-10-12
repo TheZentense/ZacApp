@@ -3,7 +3,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
-import { mockIncidents } from '@/data/mockIncidents';
+import { ErrorState, LoadingState } from '@/components/DataState';
+import { useReports } from '@/hooks/useReports';
 import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
@@ -16,17 +17,28 @@ const steps = [
   { title: 'Verificación ciudadana', detail: 'Se confirma el cierre y resultado del caso.' }
 ];
 
+const completedByStatus: Record<Incident['status'], number> = {
+  REGISTRADO: 1,
+  EN_REVISION: 1,
+  VALIDADO: 2,
+  ASIGNADO: 3,
+  EN_ATENCION: 3,
+  POR_VERIFICAR: 3,
+  CERRADO: 4,
+  RECHAZADO: 1
+};
+
 export default function TrackingScreen() {
   const { role, department } = useSession();
   const visual = roleVisuals[role];
+  const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [category, setCategory] = useState('Todas');
   const [selected, setSelected] = useState<Incident | null>(null);
-  const availableIncidents = useMemo(() => mockIncidents.filter((item) => department ? item.category === department : role === 'citizen' ? item.id !== '1' : true), [department, role]);
   const categories = useMemo(() => ['Todas', ...new Set(availableIncidents.map((item) => item.category))], [availableIncidents]);
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
   const heading = role === 'employee' ? 'Procesos del departamento' : role === 'maintenance' ? 'Avance de asignaciones' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
-  const completedSteps = selected ? (selected.status === 'CERRADO' ? steps.length : selected.status === 'EN_ATENCION' ? 3 : 2) : 0;
+  const completedSteps = selected ? completedByStatus[selected.status] : 0;
   const progress = Math.round((completedSteps / steps.length) * 100);
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
@@ -40,13 +52,14 @@ export default function TrackingScreen() {
         <View style={styles.caseMain}><Text style={[styles.code, { color: visual.accent }]}>{selected.code}</Text><Text style={styles.caseTitle}>{selected.title}</Text><Text style={styles.meta}>{selected.category} · {selected.location}</Text></View>
         <View style={styles.progressBadge}><Text style={[styles.progressValue, { color: visual.accent }]}>{progress}%</Text><Text style={styles.progressLabel}>del proceso</Text></View>
       </View>
+      {selected.status === 'RECHAZADO' && <View style={styles.rejectedNotice}><Ionicons name="alert-circle-outline" size={21} color={colors.danger} /><View style={styles.rejectedText}><Text style={styles.rejectedTitle}>Reporte no procedente</Text><Text style={styles.rejectedCopy}>El caso requiere revisión adicional o nueva información antes de continuar.</Text></View></View>}
       <View style={styles.timeline}>{steps.map((step, index) => {
         const done = index < completedSteps;
         return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, { backgroundColor: done ? visual.primary : `${visual.accent}22` }]}>{done ? <Ionicons name="checkmark" size={18} color={colors.white} /> : <Text style={[styles.stepNumber, { color: visual.primary }]}>{index + 1}</Text>}</View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={[styles.stepLine, { backgroundColor: done ? `${visual.primary}55` : colors.border }]} />}</View></View>;
       })}</View>
     </> : <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
-      {incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View> : <EmptyState title="Sin reportes disponibles" description="No hay casos para la categoría seleccionada." />}
+      {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View> : <EmptyState title="Sin reportes disponibles" description="No hay casos para la categoría seleccionada." />}
     </>}
   </ScrollView>;
 }
@@ -76,6 +89,10 @@ const styles = StyleSheet.create({
   progressBadge: { minWidth: 105, borderRadius: radius.lg, padding: spacing.md, backgroundColor: 'rgba(255,255,255,0.10)', alignItems: 'center' },
   progressValue: { fontSize: 26, fontWeight: '900' },
   progressLabel: { color: '#DDE8D7', fontSize: 11, fontWeight: '700' },
+  rejectedNotice: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.danger, backgroundColor: colors.dangerSoft, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  rejectedText: { flex: 1 },
+  rejectedTitle: { color: colors.danger, fontSize: 15, fontWeight: '800' },
+  rejectedCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
   timeline: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
   step: { flexDirection: 'row', gap: spacing.md },
   stepIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },

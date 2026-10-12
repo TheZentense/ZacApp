@@ -1,29 +1,94 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
-import { mockIncidents } from '@/data/mockIncidents';
+import { ErrorState, LoadingState } from '@/components/DataState';
+import { useReports } from '@/hooks/useReports';
 import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { updateReportStatus } from '@/services/reports';
+import { AppButton } from '@/components/AppButton';
+import type { IncidentStatus } from '@/types/domain';
 
 type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
 const filters: { key: Filter; label: string }[] = [{ key: 'TODOS', label: 'Todos' }, { key: 'ACTIVOS', label: 'Activos' }, { key: 'CERRADOS', label: 'Resueltos' }];
 
+const statusLabels: Record<IncidentStatus, string> = {
+  REGISTRADO: 'Registrado',
+  EN_REVISION: 'En revisión',
+  VALIDADO: 'Validado',
+  ASIGNADO: 'Asignado',
+  EN_ATENCION: 'En atención',
+  POR_VERIFICAR: 'Por verificar',
+  CERRADO: 'Resuelto',
+  RECHAZADO: 'Rechazado'
+};
+
+const administrativeTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> = {
+  REGISTRADO: ['EN_REVISION', 'RECHAZADO'],
+  EN_REVISION: ['VALIDADO', 'RECHAZADO'],
+  VALIDADO: ['ASIGNADO', 'RECHAZADO'],
+  ASIGNADO: ['EN_ATENCION'],
+  EN_ATENCION: ['POR_VERIFICAR'],
+  POR_VERIFICAR: ['CERRADO', 'EN_ATENCION'],
+  RECHAZADO: ['EN_REVISION']
+};
+
+const maintenanceTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> = {
+  ASIGNADO: ['EN_ATENCION'],
+  EN_ATENCION: ['POR_VERIFICAR']
+};
+
 export default function ReportsScreen() {
   const { role, department } = useSession();
   const visual = roleVisuals[role];
+  const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [filter, setFilter] = useState<Filter>('TODOS');
   const [selected, setSelected] = useState<Incident | null>(null);
-  const incidents = useMemo(() => mockIncidents.filter((item) => {
-    const belongsToScope = department ? item.category === department : role === 'citizen' ? item.id !== '1' : true;
+  const [nextStatus, setNextStatus] = useState<IncidentStatus | null>(null);
+  const [statusNote, setStatusNote] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
+  const [statusError, setStatusError] = useState('');
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const incidents = useMemo(() => availableIncidents.filter((item) => {
     const matchesStatus = filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO');
-    return belongsToScope && matchesStatus;
-  }), [department, filter, role]);
+    return matchesStatus;
+  }), [availableIncidents, filter]);
   const heading = role === 'superadmin' ? 'Reportes generales' : role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : role === 'employee' ? `Reportes del área · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
+  const availableTransitions = selected
+    ? (role === 'maintenance' ? maintenanceTransitions[selected.status] : role === 'citizen' ? [] : administrativeTransitions[selected.status]) ?? []
+    : [];
+
+  const selectReport = (incident: Incident) => {
+    setSelected(incident);
+    setNextStatus(null);
+    setStatusNote('');
+    setStatusMessage('');
+    setStatusError('');
+  };
+
+  const changeStatus = async () => {
+    if (!selected || !nextStatus || isUpdatingStatus) return;
+    setIsUpdatingStatus(true);
+    setStatusMessage('');
+    setStatusError('');
+    try {
+      const result = await updateReportStatus(selected.id, selected.status, nextStatus, statusNote, selected.category);
+      setSelected({ ...selected, status: nextStatus, updatedAt: result.updatedAt });
+      setStatusMessage(result.historyRecorded ? 'El estado y la trazabilidad se actualizaron correctamente.' : 'El estado se actualizó, pero el historial requiere revisión.');
+      setNextStatus(null);
+      setStatusNote('');
+      await reload();
+    } catch (updateError) {
+      setStatusError(updateError instanceof Error ? updateError.message : 'No fue posible actualizar el reporte.');
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
     <View style={[styles.header, { backgroundColor: visual.primary }]}>
@@ -41,10 +106,23 @@ export default function ReportsScreen() {
         <DetailRow label="Categoría" value={selected.category} />
         <DetailRow label="Ubicación" value={selected.location} />
       </View>
+      {role !== 'citizen' && <View style={styles.managementCard}>
+        <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
+        {availableTransitions.length ? <>
+          <Text style={styles.fieldLabel}>Siguiente estado</Text>
+          <View style={styles.statusOptions}>{availableTransitions.map((status) => <Pressable key={status} onPress={() => { setNextStatus(status); setStatusError(''); setStatusMessage(''); }} style={[styles.statusOption, nextStatus === status && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, nextStatus === status && styles.statusOptionTextSelected]}>{statusLabels[status]}</Text></Pressable>)}</View>
+          {nextStatus === 'ASIGNADO' && <View style={styles.assignmentNotice}><Ionicons name="business-outline" size={19} color={visual.primary} /><Text style={styles.assignmentNoticeText}>Se asignará automáticamente al departamento de {selected.category}.</Text></View>}
+          <Text style={styles.fieldLabel}>Nota del cambio</Text>
+          <TextInput value={statusNote} onChangeText={setStatusNote} multiline maxLength={300} placeholder="Agrega una observación para la trazabilidad..." placeholderTextColor={colors.muted} style={styles.noteInput} />
+          {statusError ? <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.inlineErrorText}>{statusError}</Text></View> : null}
+          {statusMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{statusMessage}</Text></View> : null}
+          <AppButton disabled={!nextStatus || isUpdatingStatus} label={isUpdatingStatus ? 'Actualizando...' : 'Confirmar cambio'} icon="checkmark-circle-outline" onPress={changeStatus} />
+        </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
+      </View>}
     </> : <>
       <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
-      <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>
-      {incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View> : <EmptyState title="No hay reportes en este filtro" description="Prueba con otro estado para consultar los casos disponibles." />}
+      {!isLoading && !error && <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>}
+      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title="No hay reportes en este filtro" description="Prueba con otro estado o registra un nuevo caso para consultarlo aquí." />}
     </>}
   </ScrollView>;
 }
@@ -77,5 +155,25 @@ const styles = StyleSheet.create({
   detailCard: { backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   detailRow: { paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   detailLabel: { color: colors.secondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
-  detailValue: { color: colors.text, fontSize: 16, fontWeight: '600', marginTop: spacing.xs }
+  detailValue: { color: colors.text, fontSize: 16, fontWeight: '600', marginTop: spacing.xs },
+  managementCard: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
+  managementHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  managementIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  managementTitleBlock: { flex: 1 },
+  managementTitle: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  managementCopy: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  fieldLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  statusOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  statusOption: { minHeight: 42, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.md, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
+  statusOptionText: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  statusOptionTextSelected: { color: colors.white },
+  assignmentNotice: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  assignmentNoticeText: { flex: 1, color: colors.primary, lineHeight: 19, fontWeight: '700' },
+  noteInput: { minHeight: 92, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, color: colors.text, fontSize: 15, textAlignVertical: 'top' },
+  inlineError: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  inlineErrorText: { flex: 1, color: colors.danger, lineHeight: 19, fontWeight: '700' },
+  inlineSuccess: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  inlineSuccessText: { flex: 1, color: colors.primary, lineHeight: 19, fontWeight: '700' },
+  noTransitions: { minHeight: 64, borderRadius: radius.md, backgroundColor: colors.surface, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  noTransitionsText: { flex: 1, color: colors.muted, lineHeight: 19 }
 });

@@ -1,44 +1,77 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
-import { createReport } from '@/services/reports';
+import { ErrorState, LoadingState } from '@/components/DataState';
+import { createReport, listReportCategories, type ReportCategory } from '@/services/reports';
+import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 
-const categories = [
-  { name: 'Alumbrado público', icon: 'bulb-outline' },
-  { name: 'Agua potable', icon: 'water-outline' },
-  { name: 'Limpieza', icon: 'trash-outline' },
-  { name: 'Calles y baches', icon: 'car-outline' },
-  { name: 'Áreas públicas', icon: 'leaf-outline' }
-] as const;
+const previewCategories: ReportCategory[] = [
+  { id: 1, name: 'Alumbrado público' },
+  { id: 2, name: 'Agua potable' },
+  { id: 3, name: 'Limpieza' },
+  { id: 4, name: 'Calles y baches' },
+  { id: 5, name: 'Áreas públicas' }
+];
+
+function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
+  const normalized = name.toLocaleLowerCase('es-GT');
+  if (normalized.includes('alumbrado')) return 'bulb-outline';
+  if (normalized.includes('agua')) return 'water-outline';
+  if (normalized.includes('limpieza') || normalized.includes('desecho')) return 'trash-outline';
+  if (normalized.includes('calle') || normalized.includes('bache')) return 'car-outline';
+  if (normalized.includes('área') || normalized.includes('parque')) return 'leaf-outline';
+  return 'apps-outline';
+}
 
 export default function NewReportScreen() {
   const { role } = useSession();
-  const [category, setCategory] = useState('Alumbrado público');
+  const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
+  const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
+  const [categoriesLoading, setCategoriesLoading] = useState(isSupabaseConfigured);
+  const [categoriesError, setCategoriesError] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+
+  const loadCategories = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    setCategoriesLoading(true);
+    setCategoriesError('');
+    try {
+      const availableCategories = await listReportCategories();
+      setCategories(availableCategories);
+      setCategory((current) => availableCategories.some((item) => item.name === current) ? current : availableCategories[0]?.name ?? '');
+    } catch (error) {
+      setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const openCamera = async () => {
     if (!cameraPermission?.granted) await requestCameraPermission();
     setCameraOpen(true);
   };
   const submit = async () => {
-    if (!description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Agrega una descripción y ubicación.');
+    if (!category || !description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega la descripción y ubicación.');
     if (isSubmitting) return;
 
     try {
       setIsSubmitting(true);
       const incident = await createReport({ categoryName: category, description, location });
-      Alert.alert('Reporte registrado', `Tu reporte ${incident.code} se registró correctamente.`, [
-        { text: 'Aceptar', onPress: () => router.back() }
-      ]);
+      setCreatedIncident(incident);
     } catch (error) {
       Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Intenta nuevamente.');
     } finally {
@@ -47,6 +80,35 @@ export default function NewReportScreen() {
   };
 
   if (role !== 'citizen') return <Redirect href="/(tabs)" />;
+
+  if (createdIncident) return (
+    <ScrollView style={styles.scroll} contentContainerStyle={[styles.page, styles.confirmationPage]}>
+      <View style={styles.confirmationCard}>
+        <View style={styles.successSeal}><Ionicons name="checkmark" size={38} color={colors.white} /></View>
+        <Text style={styles.confirmationEyebrow}>REPORTE REGISTRADO</Text>
+        <Text style={styles.confirmationTitle}>Recibimos tu reporte</Text>
+        <Text style={styles.confirmationCopy}>El caso quedó asociado a tu cuenta y ya puede consultarse en ZacApp.</Text>
+
+        <View style={styles.codeCard}>
+          <Text style={styles.codeLabel}>Código de seguimiento</Text>
+          <Text selectable style={styles.codeValue}>{createdIncident.code}</Text>
+          <Text style={styles.codeNote}>Conserva este código para identificar tu reporte.</Text>
+        </View>
+
+        <View style={styles.confirmationSummary}>
+          <View style={styles.summaryRow}><Ionicons name="apps-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Categoría</Text><Text style={styles.summaryValue}>{category}</Text></View></View>
+          <View style={styles.summaryRow}><Ionicons name="location-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Ubicación</Text><Text style={styles.summaryValue}>{location}</Text></View></View>
+          <View style={styles.summaryRow}><Ionicons name="time-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Estado inicial</Text><Text style={styles.summaryValue}>Registrado</Text></View></View>
+        </View>
+
+        <View style={styles.confirmationActions}>
+          <AppButton label="Ver mis reportes" icon="documents-outline" onPress={() => router.replace('/reports')} />
+          <AppButton label="Consultar seguimiento" variant="secondary" icon="trail-sign-outline" onPress={() => router.replace('/tracking')} />
+          <AppButton label="Volver al inicio" variant="ghost" icon="home-outline" onPress={() => router.replace('/')} />
+        </View>
+      </View>
+    </ScrollView>
+  );
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
@@ -63,10 +125,10 @@ export default function NewReportScreen() {
 
       <View style={styles.form}>
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View><Text style={styles.sectionTitle}>Tipo de incidencia</Text><Text style={styles.sectionCopy}>Selecciona la categoría que mejor corresponda.</Text></View></View>
-        <View style={styles.categories}>{categories.map((item) => {
+        {categoriesLoading ? <LoadingState label="Consultando categorías..." /> : categoriesError ? <ErrorState description={categoriesError} onRetry={loadCategories} /> : categories.length ? <View style={styles.categories}>{categories.map((item) => {
           const selected = category === item.name;
-          return <Pressable key={item.name} onPress={() => setCategory(item.name)} style={[styles.category, selected && styles.categorySelected]}><Ionicons name={item.icon} size={21} color={selected ? colors.white : colors.primary} /><Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>{item.name}</Text>{selected && <Ionicons name="checkmark-circle" size={18} color={colors.accent} />}</Pressable>;
-        })}</View>
+          return <Pressable key={item.id} onPress={() => setCategory(item.name)} style={[styles.category, selected && styles.categorySelected]}><Ionicons name={categoryIcon(item.name)} size={21} color={selected ? colors.white : colors.primary} /><Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>{item.name}</Text>{selected && <Ionicons name="checkmark-circle" size={18} color={colors.accent} />}</Pressable>;
+        })}</View> : <ErrorState description="No hay categorías disponibles para registrar reportes." onRetry={loadCategories} />}
 
         <View style={styles.divider} />
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View><View><Text style={styles.sectionTitle}>Información del caso</Text><Text style={styles.sectionCopy}>Describe el problema y dónde se encuentra.</Text></View></View>
@@ -95,7 +157,7 @@ export default function NewReportScreen() {
           <Ionicons name="arrow-forward" size={18} color={colors.primary} />
         </Pressable>
 
-        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>El reporte quedará asociado únicamente a tu cuenta.</Text></View><AppButton label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
+        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>El reporte quedará asociado únicamente a tu cuenta.</Text></View><AppButton disabled={isSubmitting || categoriesLoading || !category} label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
         <AppButton label="Cancelar" variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
 
@@ -184,5 +246,21 @@ const styles = StyleSheet.create({
   cameraNote: { color: colors.white, backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginTop: spacing.lg, overflow: 'hidden' },
   permissionPage: { flex: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.md, backgroundColor: colors.background },
   permissionTitle: { color: colors.primary, fontSize: 26, fontWeight: '800', textAlign: 'center' },
-  permissionCopy: { color: colors.muted, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: spacing.md }
+  permissionCopy: { color: colors.muted, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: spacing.md },
+  confirmationPage: { minHeight: '100%', justifyContent: 'center' },
+  confirmationCard: { width: '100%', backgroundColor: colors.white, borderRadius: 28, borderWidth: 1, borderColor: colors.border, padding: spacing.xl, alignItems: 'center', gap: spacing.md },
+  successSeal: { width: 76, height: 76, borderRadius: 38, backgroundColor: colors.primary, borderWidth: 7, borderColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  confirmationEyebrow: { color: colors.secondary, fontSize: 11, fontWeight: '900', letterSpacing: 1.3, marginTop: spacing.xs },
+  confirmationTitle: { color: colors.primary, fontSize: 29, fontWeight: '900', textAlign: 'center' },
+  confirmationCopy: { maxWidth: 480, color: colors.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' },
+  codeCard: { width: '100%', maxWidth: 520, borderRadius: radius.xl, backgroundColor: colors.primary, padding: spacing.lg, alignItems: 'center', gap: spacing.xs },
+  codeLabel: { color: '#DDE8D7', fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  codeValue: { color: colors.accent, fontSize: 25, fontWeight: '900', letterSpacing: 0.8 },
+  codeNote: { color: '#DDE8D7', fontSize: 12, textAlign: 'center' },
+  confirmationSummary: { width: '100%', maxWidth: 520, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg },
+  summaryRow: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  summaryText: { flex: 1 },
+  summaryLabel: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  summaryValue: { color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
+  confirmationActions: { width: '100%', maxWidth: 520, gap: spacing.sm, marginTop: spacing.sm }
 });
