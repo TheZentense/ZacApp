@@ -1,5 +1,5 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { router } from 'expo-router';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
@@ -36,10 +36,14 @@ const employeeFunctions = [
 ] as const;
 
 export default function AdminMenuScreen() {
+  const { width } = useWindowDimensions();
   const { role } = useSession();
   const visual = roleVisuals[role];
   const visibleFunctions = role === 'maintenance' ? maintenanceFunctions : role === 'employee' ? employeeFunctions : functions;
   const title = role === 'maintenance' ? 'Herramientas de campo' : role === 'employee' ? 'Funciones del departamento' : 'Funciones administrativas';
+  const isWide = width >= 780;
+
+  if (role === 'citizen') return <Redirect href="/services" />;
 
   const openFunction = (item: (typeof visibleFunctions)[number]) => {
     if ('route' in item) return router.push(item.route);
@@ -49,22 +53,27 @@ export default function AdminMenuScreen() {
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
       <View style={[styles.header, { backgroundColor: visual.primary }]}>
-        <View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="options-outline" size={26} color={colors.white} /></View>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.copy}>Selecciona una función disponible para tu rol.</Text>
+        <View style={styles.headerMain}>
+          <View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="options-outline" size={26} color={visual.primary} /></View>
+          <View style={styles.headerText}>
+            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · CENTRO DE CONTROL</Text>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.copy}>Selecciona una función disponible para tu rol.</Text>
+          </View>
         </View>
+        <View style={styles.moduleCount}><Text style={[styles.moduleNumber, { color: visual.accent }]}>{visibleFunctions.length}</Text><Text style={styles.moduleLabel}>módulos disponibles</Text></View>
       </View>
 
+      <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>HERRAMIENTAS</Text><Text style={styles.sectionTitle}>¿Qué deseas hacer?</Text></View>
       <View style={styles.grid}>
         {visibleFunctions.map((item) => (
-          <Pressable key={item.title} style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={() => openFunction(item)}>
-            <View style={[styles.icon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name={item.icon} size={24} color={visual.primary} /></View>
+          <Pressable key={item.title} style={({ pressed }) => [styles.card, isWide && styles.cardWide, pressed && styles.pressed]} onPress={() => openFunction(item)}>
+            <View style={[styles.icon, { backgroundColor: visual.primary }]}><Ionicons name={item.icon} size={23} color={colors.white} /></View>
             <View style={styles.cardText}>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.cardCopy}>{item.copy}</Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+            <View style={[styles.cardArrow, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="arrow-forward" size={17} color={visual.primary} /></View>
           </Pressable>
         ))}
       </View>
@@ -75,16 +84,26 @@ export default function AdminMenuScreen() {
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.background },
   page: { width: '100%', maxWidth: 900, alignSelf: 'center', padding: spacing.lg, gap: spacing.lg },
-  header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.lg, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.lg },
+  headerMain: { flex: 1, minWidth: 260, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   headerIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
   headerText: { flex: 1 },
+  eyebrow: { fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginBottom: spacing.xs },
   title: { color: colors.white, fontSize: 24, fontWeight: '800' },
   copy: { color: '#DDE8D7', marginTop: spacing.xs, lineHeight: 20 },
-  grid: { gap: spacing.md },
+  moduleCount: { minWidth: 130, borderRadius: radius.lg, padding: spacing.md, backgroundColor: 'rgba(255,255,255,0.10)' },
+  moduleNumber: { fontSize: 28, fontWeight: '900' },
+  moduleLabel: { color: '#DDE8D7', fontSize: 12, fontWeight: '700' },
+  sectionHeading: { gap: 2 },
+  sectionKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
+  sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   card: { minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  cardWide: { flexBasis: 340, flexGrow: 1 },
   icon: { width: 46, height: 46, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
   cardText: { flex: 1 },
   cardTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cardCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
+  cardArrow: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.8 }
 });

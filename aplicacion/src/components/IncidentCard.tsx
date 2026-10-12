@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Incident } from '@/types/domain';
 import { colors, radius, spacing } from '@/theme/tokens';
 
@@ -15,6 +16,7 @@ const statusStyles = {
 
 export function IncidentCard({ incident, onPress, compact = false }: { incident: Incident; onPress?: () => void; compact?: boolean }) {
   const status = statusStyles[incident.status];
+  const categoryIcon = incident.category === 'Agua potable' ? 'water-outline' : incident.category === 'Alumbrado público' ? 'bulb-outline' : incident.category === 'Limpieza' ? 'trash-outline' : 'location-outline';
 
   return (
     <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [styles.card, compact && styles.compactCard, pressed && styles.pressed]}>
@@ -24,11 +26,14 @@ export function IncidentCard({ incident, onPress, compact = false }: { incident:
           <Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text>
         </View>
       </View>
-      <Text style={styles.title}>{incident.title}</Text>
+      <View style={styles.titleRow}>
+        <View style={styles.categoryIcon}><Ionicons name={categoryIcon} size={18} color={colors.primary} /></View>
+        <Text style={styles.title}>{incident.title}</Text>
+      </View>
       {!compact && <Text style={styles.description} numberOfLines={2}>{incident.description}</Text>}
-      <Text style={styles.meta}>{incident.category} · {incident.location}</Text>
+      <View style={styles.metaRow}><Text style={styles.category}>{incident.category}</Text><View style={styles.metaDot} /><Text style={styles.meta} numberOfLines={1}>{incident.location}</Text></View>
       {!compact && <Text style={styles.date}>Actualizado: {incident.updatedAt}</Text>}
-      {onPress && <Text style={styles.openLabel}>Abrir reporte</Text>}
+      {onPress && <View style={styles.openRow}><Text style={styles.openLabel}>Abrir reporte</Text><Ionicons name="arrow-forward" size={15} color={colors.primary} /></View>}
     </Pressable>
   );
 }
@@ -48,11 +53,17 @@ const styles = StyleSheet.create({
   code: { color: colors.muted, fontWeight: '700' },
   badge: { borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
   badgeText: { fontSize: 12, fontWeight: '800' },
-  title: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  categoryIcon: { width: 34, height: 34, borderRadius: 12, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  title: { flex: 1, color: colors.text, fontSize: 17, fontWeight: '800' },
   description: { color: colors.muted, lineHeight: 20 },
-  meta: { color: colors.muted },
+  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs },
+  category: { color: colors.secondary, fontSize: 12, fontWeight: '800' },
+  metaDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: colors.border },
+  meta: { flexShrink: 1, color: colors.muted, fontSize: 12 },
   date: { color: colors.secondary, fontSize: 12, fontWeight: '700' },
   compactCard: { padding: spacing.md },
   pressed: { opacity: 0.8 },
-  openLabel: { color: colors.primary, fontSize: 13, fontWeight: '800', textAlign: 'right' }
+  openRow: { alignSelf: 'flex-end', flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },
+  openLabel: { color: colors.primary, fontSize: 13, fontWeight: '800' }
 });

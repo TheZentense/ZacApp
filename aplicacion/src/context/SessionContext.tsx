@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
 export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
@@ -6,6 +7,7 @@ export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'emp
 type SessionContextValue = {
   role: UserRole;
   email: string;
+  fullName: string;
   department: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -19,11 +21,12 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('citizen');
   const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
   const [department, setDepartment] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
 
-  const applyIdentity = (value?: string | null) => {
+  const applyEmailFallback = (value?: string | null) => {
     const normalizedEmail = value?.trim().toLowerCase() ?? '';
     setEmail(normalizedEmail);
     setIsAuthenticated(Boolean(normalizedEmail));
@@ -46,17 +49,49 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const hydrateIdentity = async (user?: User | null) => {
+    if (!user) {
+      applyEmailFallback(null);
+      setFullName('');
+      return;
+    }
+
+    applyEmailFallback(user.email);
+    setFullName(typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '');
+    if (!supabase) return;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('full_name, role, department:departments(name)')
+      .eq('id', user.id)
+      .single();
+
+    if (error || !data) return;
+    const databaseRole = data.role as string;
+    const departmentData = data.department as unknown as { name?: string } | { name?: string }[] | null;
+    const departmentName = Array.isArray(departmentData) ? departmentData[0]?.name : departmentData?.name;
+    const normalizedEmail = user.email?.trim().toLowerCase() ?? '';
+
+    if (normalizedEmail.startsWith('superadmin')) setRole('superadmin');
+    else if (databaseRole === 'administrador' || databaseRole === 'supervisor') setRole('admin');
+    else if (databaseRole === 'mantenimiento') setRole('maintenance');
+    else if (['operador', 'coordinador', 'comunicacion'].includes(databaseRole)) setRole('employee');
+    else setRole('citizen');
+
+    setFullName(data.full_name || '');
+    setDepartment(departmentName ?? null);
+  };
+
   useEffect(() => {
     if (!supabase) return;
 
-    supabase.auth.getSession().then(({ data }) => {
-      applyIdentity(data.session?.user.email);
+    supabase.auth.getSession().then(async ({ data }) => {
+      await hydrateIdentity(data.session?.user);
       setIsLoading(false);
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      applyIdentity(session?.user.email);
-      setIsLoading(false);
+      hydrateIdentity(session?.user).finally(() => setIsLoading(false));
     });
 
     return () => data.subscription.unsubscribe();
@@ -66,13 +101,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () => ({
       role,
       email,
+      fullName,
       department,
       isAuthenticated,
       isLoading,
       signIn: async (value: string, password: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
-        const { error } = await supabase.auth.signInWithPassword({ email: value.trim().toLowerCase(), password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email: value.trim().toLowerCase(), password });
         if (error) throw error;
+        await hydrateIdentity(data.user);
       },
       signUp: async (name: string, value: string, password: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
@@ -86,10 +123,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       },
       signOut: async () => {
         if (supabase) await supabase.auth.signOut();
-        applyIdentity(null);
+        await hydrateIdentity(null);
       }
     }),
-    [department, email, isAuthenticated, isLoading, role]
+    [department, email, fullName, isAuthenticated, isLoading, role]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
