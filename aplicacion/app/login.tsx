@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
@@ -6,11 +6,36 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('ciudadano@zacapp.gt');
-  const [password, setPassword] = useState('zacapp1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const passwordInputRef = useRef<TextInput>(null);
   const { signIn } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
+
+  const submit = async () => {
+    if (!email.trim() || !password) {
+      setErrorMessage('Ingresa tu correo electrónico y contraseña.');
+      return;
+    }
+
+    setErrorMessage('');
+    setIsSubmitting(true);
+    try {
+      await signIn(email, password);
+      router.replace('/(tabs)');
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (message.includes('invalid login credentials')) setErrorMessage('El correo o la contraseña no son correctos.');
+      else if (message.includes('email not confirmed')) setErrorMessage('Confirma tu correo electrónico antes de ingresar.');
+      else if (message.includes('failed to fetch') || message.includes('network')) setErrorMessage('No fue posible conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.');
+      else setErrorMessage('No fue posible iniciar sesión. Inténtalo nuevamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -38,6 +63,8 @@ export default function LoginScreen() {
               keyboardType="email-address"
               placeholder="correo@zacapp.gt"
               placeholderTextColor={colors.muted}
+              editable={!isSubmitting}
+              onSubmitEditing={() => passwordInputRef.current?.focus()}
             />
 
             <Text style={styles.label}>Contraseña</Text>
@@ -48,15 +75,18 @@ export default function LoginScreen() {
               secureTextEntry
               placeholder="Contraseña"
               placeholderTextColor={colors.muted}
+              editable={!isSubmitting}
+              onSubmitEditing={submit}
+              returnKeyType="done"
+              ref={passwordInputRef}
             />
 
+            {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
+
             <AppButton
-              label="Iniciar sesión"
+              label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
-              onPress={() => {
-                signIn(email);
-                router.replace('/(tabs)');
-              }}
+              onPress={submit}
             />
             <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
@@ -92,5 +122,7 @@ const styles = StyleSheet.create({
   cardCopyMobile: { fontSize: 14, lineHeight: 20, marginBottom: spacing.sm },
   label: { color: colors.text, fontWeight: '600', marginTop: spacing.xs },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontSize: 16, backgroundColor: colors.surface },
-  helpText: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: spacing.xs }
+  helpText: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: spacing.xs },
+  errorBox: { backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: '#F2B8B5', borderRadius: radius.md, padding: spacing.md, marginVertical: spacing.xs },
+  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' }
 });

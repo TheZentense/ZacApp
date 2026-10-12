@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
+import { createReport } from '@/services/reports';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 export default function NewReportScreen() {
@@ -11,15 +12,28 @@ export default function NewReportScreen() {
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const openCamera = async () => {
     if (!cameraPermission?.granted) await requestCameraPermission();
     setCameraOpen(true);
   };
-  const submit = () => {
+  const submit = async () => {
     if (!description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Agrega una descripción y ubicación.');
-    Alert.alert('Reporte registrado', 'Tu reporte se registró correctamente.', [{ text: 'Aceptar', onPress: () => router.back() }]);
+    if (isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+      const incident = await createReport({ categoryName: category, description, location });
+      Alert.alert('Reporte registrado', `Tu reporte ${incident.code} se registró correctamente.`, [
+        { text: 'Aceptar', onPress: () => router.back() }
+      ]);
+    } catch (error) {
+      Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -61,7 +75,7 @@ export default function NewReportScreen() {
           </View>
         </Pressable>
 
-        <AppButton label="Enviar reporte" icon="send-outline" onPress={submit} />
+        <AppButton label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} />
         <AppButton label="Cancelar" variant="ghost" onPress={() => router.back()} />
       </View>
 

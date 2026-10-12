@@ -3,28 +3,38 @@ import { AppButton } from '@/components/AppButton';
 import { router } from 'expo-router';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
+
+const profileContent = {
+  citizen: { name: 'Ciudadano ZacApp', initials: 'CZ', role: 'Ciudadano', area: 'Cuenta ciudadana' },
+  admin: { name: 'Administrador ZacApp', initials: 'AZ', role: 'Administrador', area: 'Administración general' },
+  superadmin: { name: 'Superadministrador ZacApp', initials: 'SA', role: 'Superadministrador', area: 'Control de la plataforma' },
+  maintenance: { name: 'Personal de mantenimiento', initials: 'MA', role: 'Mantenimiento', area: 'Atención en campo' },
+  employee: { name: 'Empleado municipal', initials: 'EA', role: 'Empleado departamental', area: 'Gestión del departamento' }
+} as const;
 
 export default function ProfileScreen() {
   const { role, email, department, signOut } = useSession();
-  const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
+  const content = profileContent[role];
+  const visual = roleVisuals[role];
+  const isCitizen = role === 'citizen';
 
   return (
     <View style={styles.page}>
       <View style={styles.content}>
-        <View style={styles.profileHeader}>
-          <View style={styles.avatar}><Text style={styles.initials}>{isAdmin ? 'SA' : isMaintenance ? 'MA' : 'CZ'}</Text></View>
+        <View style={[styles.profileHeader, { backgroundColor: visual.primary }]}>
+          <View style={[styles.avatar, { backgroundColor: visual.accent }]}><Text style={[styles.initials, { color: visual.primary }]}>{content.initials}</Text></View>
           <View style={styles.identity}>
-            <Text style={styles.name}>{isAdmin ? 'Superadministrador ZacApp' : isMaintenance ? 'Personal de mantenimiento' : 'Ciudadano ZacApp'}</Text>
-            <Text style={styles.role}>{isAdmin ? 'Superadministrador · Zacapa' : isMaintenance ? `${department} · Zacapa` : 'Ciudadano · Zacapa'}</Text>
+            <Text style={styles.name}>{content.name}</Text>
+            <Text style={styles.role}>{department ? `${content.role} · ${department}` : `${content.role} · Zacapa`}</Text>
           </View>
         </View>
 
         <View style={styles.card}>
           <InfoRow label="Correo" value={email} />
           <InfoRow label="Municipio" value="Zacapa" />
-          <InfoRow label={isAdmin || isMaintenance ? 'Área' : 'Reportes activos'} value={isAdmin ? 'Administración general' : isMaintenance ? department ?? 'Mantenimiento' : '8 en proceso'} />
-          <InfoRow label="Rol actual" value={isAdmin ? 'Superadministrador' : isMaintenance ? 'Mantenimiento' : 'Ciudadano'} />
+          <InfoRow label={isCitizen ? 'Acceso' : 'Área'} value={isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
+          <InfoRow label="Rol actual" value={content.role} />
         </View>
 
         <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={() => { signOut(); router.replace('/login'); }} />

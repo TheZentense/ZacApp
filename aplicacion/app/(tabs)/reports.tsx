@@ -6,24 +6,31 @@ import { mockIncidents } from '@/data/mockIncidents';
 import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
 
 type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
 const filters: { key: Filter; label: string }[] = [{ key: 'TODOS', label: 'Todos' }, { key: 'ACTIVOS', label: 'Activos' }, { key: 'CERRADOS', label: 'Resueltos' }];
 
 export default function ReportsScreen() {
   const { role, department } = useSession();
+  const visual = roleVisuals[role];
   const [filter, setFilter] = useState<Filter>('TODOS');
   const [selected, setSelected] = useState<Incident | null>(null);
-  const incidents = useMemo(() => mockIncidents.filter((item) => (!department || item.category === department) && (filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO'))), [department, filter]);
-  const heading = role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : 'Mis reportes';
+  const incidents = useMemo(() => mockIncidents.filter((item) => {
+    const belongsToScope = department ? item.category === department : role === 'citizen' ? item.id !== '1' : true;
+    const matchesStatus = filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO');
+    return belongsToScope && matchesStatus;
+  }), [department, filter, role]);
+  const heading = role === 'superadmin' ? 'Reportes generales' : role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : role === 'employee' ? `Reportes del área · ${department}` : 'Mis reportes';
+  const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
 
-  return <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
+  return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
     <View style={styles.header}>
-      <Text style={styles.title}>{selected ? 'Detalle del reporte' : heading}</Text>
-      <Text style={styles.copy}>{selected ? 'Información y estado actual de la incidencia seleccionada.' : 'Filtra la lista y selecciona un reporte para consultar su información.'}</Text>
+      <Text style={[styles.title, { color: visual.primary }]}>{selected ? 'Detalle del reporte' : heading}</Text>
+      <Text style={styles.copy}>{selected ? 'Información y estado actual de la incidencia seleccionada.' : description}</Text>
     </View>
     {selected ? <>
-      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={colors.primary} /><Text style={styles.backText}>Volver a reportes</Text></Pressable>
+      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Volver a reportes</Text></Pressable>
       <IncidentCard incident={selected} />
       <View style={styles.detailCard}>
         <DetailRow label="Fecha de registro" value={selected.createdAt} />
@@ -32,7 +39,7 @@ export default function ReportsScreen() {
         <DetailRow label="Ubicación" value={selected.location} />
       </View>
     </> : <>
-      <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && styles.filterActive]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
+      <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
       <Text style={styles.resultCount}>{incidents.length} reportes encontrados</Text>
       <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View>
     </>}

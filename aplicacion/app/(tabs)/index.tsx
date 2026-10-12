@@ -3,142 +3,118 @@ import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { IncidentCard } from '@/components/IncidentCard';
+import { useSession, UserRole } from '@/context/SessionContext';
 import { mockIncidents } from '@/data/mockIncidents';
 import { colors, radius, spacing } from '@/theme/tokens';
-import { useSession } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
 
-const summary = [
-  { label: 'Reportes registrados', value: '24', icon: 'file-tray-full-outline' },
-  { label: 'En proceso', value: '8', icon: 'construct-outline' },
-  { label: 'Resueltos', value: '13', icon: 'checkmark-circle-outline' },
-  { label: 'Pendientes', value: '3', icon: 'time-outline' }
-] as const;
+type Route = '/reports' | '/tracking' | '/admin-menu' | '/profile';
+type Dashboard = {
+  title: string;
+  copy: string;
+  stats: { label: string; value: string; icon: keyof typeof Ionicons.glyphMap }[];
+  actions: { title: string; copy: string; icon: keyof typeof Ionicons.glyphMap; route: Route }[];
+  activity: string;
+};
 
-const actions = [
-  { title: 'Nuevo reporte', copy: 'Registrar una incidencia comunitaria', icon: 'add-circle-outline', route: '/report/new' },
-  { title: 'Reportes', copy: 'Consultar reportes registrados', icon: 'document-text-outline', route: '/reports' },
-  { title: 'Seguimiento', copy: 'Ver trazabilidad y responsables', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Servicios', copy: 'Explorar recursos y atención municipal', icon: 'apps-outline', route: '/services' },
-  { title: 'Perfil', copy: 'Revisar datos del ciudadano', icon: 'person-outline', route: '/profile' }
-] as const;
-
-const adminActions = [
-  { title: 'Gestionar reportes', copy: 'Revisar incidencias ciudadanas', icon: 'document-text-outline', route: '/reports' },
-  { title: 'Seguimiento', copy: 'Controlar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Funciones', copy: 'Abrir herramientas administrativas', icon: 'menu-outline', route: '/admin-menu' },
-  { title: 'Perfil', copy: 'Revisar la sesión administrativa', icon: 'person-outline', route: '/profile' }
-] as const;
-
-const maintenanceActions = [
-  { title: 'Asignaciones', copy: 'Consultar trabajos del área de Agua potable', icon: 'clipboard-outline', route: '/reports' },
-  { title: 'Seguimiento', copy: 'Actualizar el avance de las atenciones', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Perfil', copy: 'Revisar cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
-] as const;
-
-const maintenanceSummary = [
-  { label: 'Asignaciones recibidas', value: '6', icon: 'clipboard-outline' },
-  { label: 'En atención', value: '2', icon: 'construct-outline' },
-  { label: 'Completadas', value: '3', icon: 'checkmark-circle-outline' },
-  { label: 'Pendientes', value: '1', icon: 'time-outline' }
-] as const;
+const dashboards: Record<UserRole, Dashboard> = {
+  citizen: {
+    title: 'Tus reportes, en un solo lugar',
+    copy: 'Registra una incidencia y consulta únicamente el avance de los casos que has enviado.',
+    stats: [['En proceso', '2', 'construct-outline'], ['Resueltos', '3', 'checkmark-circle-outline'], ['Total enviados', '5', 'document-text-outline']].map(([label, value, icon]) => ({ label, value, icon: icon as keyof typeof Ionicons.glyphMap })),
+    actions: [
+      { title: 'Mis reportes', copy: 'Consulta tus solicitudes', icon: 'document-text-outline', route: '/reports' },
+      { title: 'Seguimiento', copy: 'Revisa avances y estados', icon: 'trail-sign-outline', route: '/tracking' },
+      { title: 'Mi perfil', copy: 'Datos y preferencias', icon: 'person-outline', route: '/profile' }
+    ],
+    activity: 'Tus reportes recientes'
+  },
+  admin: {
+    title: 'Control general de incidencias', copy: 'Supervisa todos los departamentos, prioridades y responsables.',
+    stats: [['Sin asignar', '3', 'alert-circle-outline'], ['En atención', '8', 'construct-outline'], ['Cerrados hoy', '5', 'checkmark-circle-outline']].map(([label, value, icon]) => ({ label, value, icon: icon as keyof typeof Ionicons.glyphMap })),
+    actions: [
+      { title: 'Gestionar reportes', copy: 'Todos los departamentos', icon: 'file-tray-full-outline', route: '/reports' },
+      { title: 'Seguimiento general', copy: 'Procesos y responsables', icon: 'git-branch-outline', route: '/tracking' },
+      { title: 'Administración', copy: 'Usuarios, áreas y métricas', icon: 'options-outline', route: '/admin-menu' }
+    ], activity: 'Actividad de todos los departamentos'
+  },
+  superadmin: {
+    title: 'Administración de la plataforma', copy: 'Consulta la operación completa y administra permisos y departamentos.',
+    stats: [['Departamentos', '5', 'business-outline'], ['Usuarios activos', '18', 'people-outline'], ['Casos abiertos', '11', 'file-tray-full-outline']].map(([label, value, icon]) => ({ label, value, icon: icon as keyof typeof Ionicons.glyphMap })),
+    actions: [
+      { title: 'Reportes generales', copy: 'Vista completa del municipio', icon: 'document-text-outline', route: '/reports' },
+      { title: 'Seguimiento', copy: 'Audita todos los procesos', icon: 'trail-sign-outline', route: '/tracking' },
+      { title: 'Configuración', copy: 'Roles, áreas y accesos', icon: 'shield-checkmark-outline', route: '/admin-menu' }
+    ], activity: 'Actividad general'
+  },
+  maintenance: {
+    title: 'Trabajo asignado para hoy', copy: 'Atiende únicamente las órdenes de Agua potable asignadas a tu equipo.',
+    stats: [['Pendientes', '3', 'time-outline'], ['En atención', '2', 'construct-outline'], ['Completadas', '4', 'checkmark-circle-outline']].map(([label, value, icon]) => ({ label, value, icon: icon as keyof typeof Ionicons.glyphMap })),
+    actions: [
+      { title: 'Mis asignaciones', copy: 'Órdenes del departamento', icon: 'clipboard-outline', route: '/reports' },
+      { title: 'Actualizar avances', copy: 'Estados y evidencias', icon: 'camera-outline', route: '/tracking' },
+      { title: 'Herramientas', copy: 'Funciones de campo', icon: 'build-outline', route: '/admin-menu' }
+    ], activity: 'Asignaciones recientes'
+  },
+  employee: {
+    title: 'Bandeja del departamento', copy: 'Revisa y canaliza únicamente los reportes correspondientes a Agua potable.',
+    stats: [['Por revisar', '4', 'eye-outline'], ['Validados', '6', 'checkmark-done-outline'], ['Canalizados', '3', 'git-branch-outline']].map(([label, value, icon]) => ({ label, value, icon: icon as keyof typeof Ionicons.glyphMap })),
+    actions: [
+      { title: 'Bandeja de reportes', copy: 'Casos de Agua potable', icon: 'file-tray-full-outline', route: '/reports' },
+      { title: 'Procesos', copy: 'Validación y canalización', icon: 'git-branch-outline', route: '/tracking' },
+      { title: 'Herramientas', copy: 'Funciones departamentales', icon: 'apps-outline', route: '/admin-menu' }
+    ], activity: 'Movimientos del departamento'
+  }
+};
 
 export default function HomeScreen() {
   const { width } = useWindowDimensions();
+  const { role, department } = useSession();
+  const content = dashboards[role];
+  const visual = roleVisuals[role];
   const isWide = width >= 900;
-  const { role } = useSession();
-  const isAdmin = role === 'admin';
-  const isMaintenance = role === 'maintenance';
-  const isStaff = isAdmin || isMaintenance;
-  const visibleActions = isAdmin ? adminActions : isMaintenance ? maintenanceActions : actions;
-  const visibleSummary = isMaintenance ? maintenanceSummary : summary;
+  const visibleIncidents = mockIncidents.filter((incident) => department ? incident.category === department : role === 'citizen' ? incident.id !== '1' : true).slice(0, 2);
 
   return (
-    <ScrollView style={[styles.scroll, isStaff && styles.adminScroll]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
+    <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
       <View style={styles.shell}>
-        <View style={styles.main}>
-          <View style={[styles.header, isAdmin && styles.adminHeader, isMaintenance && styles.maintenanceHeader]}>
-            <View style={styles.headerText}>
-              <Text style={[styles.eyebrow, isStaff && styles.adminEyebrow, isMaintenance && styles.maintenanceEyebrow]}>{isAdmin ? 'SUPERADMINISTRACIÓN' : isMaintenance ? 'MANTENIMIENTO' : 'BIENVENIDO'}</Text>
-              <Text style={styles.heading}>{isAdmin ? 'Panel administrativo' : isMaintenance ? 'Panel de Agua potable' : 'Dashboard ZacApp'}</Text>
-              <Text style={styles.copy}>{isAdmin ? 'Resumen general para gestionar reportes y funciones del sistema.' : isMaintenance ? 'Asignaciones recibidas por el departamento y estado de atención.' : 'Resumen visual de reportes comunitarios y accesos principales.'}</Text>
-            </View>
-            {!isStaff && <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={isWide ? styles.headerButton : undefined} />}
+        <View style={[styles.hero, { backgroundColor: visual.primary }]}>
+          <View style={styles.heroText}>
+            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow}{department ? ` · ${department.toUpperCase()}` : ''}</Text>
+            <Text style={styles.heading}>{content.title}</Text>
+            <Text style={styles.copy}>{content.copy}</Text>
           </View>
-
-          <View style={styles.statsGrid}>
-            {visibleSummary.map((item) => (
-              <View key={item.label} style={[styles.stat, isWide && styles.statWide]}>
-                <View style={[styles.statIcon, isStaff && styles.adminIcon, isMaintenance && styles.maintenanceIcon]}><Ionicons name={item.icon} size={22} color={isMaintenance ? '#0F4C5C' : isAdmin ? '#A66A00' : colors.primary} /></View>
-                <Text style={styles.statNumber}>{item.value}</Text>
-                <Text style={styles.statLabel}>{item.label}</Text>
-              </View>
-            ))}
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Accesos rápidos</Text>
-            <Text style={styles.sectionMeta}>Resumen general</Text>
-          </View>
-          <View style={styles.actionsGrid}>
-            {visibleActions.map((item) => (
-              <Pressable key={item.title} style={[styles.actionCard, isWide && styles.actionCardWide]} onPress={() => router.push(item.route)}>
-                <View style={[styles.actionIcon, isStaff && styles.adminIcon, isMaintenance && styles.maintenanceIcon]}><Ionicons name={item.icon} size={23} color={isMaintenance ? '#0F4C5C' : isAdmin ? '#A66A00' : colors.primary} /></View>
-                <View style={styles.actionText}>
-                  <Text style={styles.actionTitle}>{item.title}</Text>
-                  <Text style={styles.actionCopy}>{item.copy}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-              </Pressable>
-            ))}
-          </View>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Actividad reciente</Text>
-            <Text style={styles.sectionMeta}>Últimos movimientos</Text>
-          </View>
-          <View style={styles.incidentList}>
-            {mockIncidents.slice(0, 3).map((incident) => <IncidentCard key={incident.id} incident={incident} />)}
-          </View>
+          {role === 'citizen' && <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={styles.primaryAction} />}
         </View>
+
+        <View style={styles.statsGrid}>{content.stats.map((item) => (
+          <View key={item.label} style={styles.stat}>
+            <View style={[styles.statIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name={item.icon} size={20} color={visual.primary} /></View>
+            <View><Text style={[styles.statNumber, { color: visual.primary }]}>{item.value}</Text><Text style={styles.statLabel}>{item.label}</Text></View>
+          </View>
+        ))}</View>
+
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Accesos principales</Text><Text style={[styles.sectionMeta, { color: visual.primary }]}>{visual.label}</Text></View>
+        <View style={styles.actionsGrid}>{content.actions.map((item) => (
+          <Pressable key={item.title} style={[styles.actionCard, isWide && styles.actionCardWide]} onPress={() => router.push(item.route)}>
+            <View style={[styles.actionIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name={item.icon} size={22} color={visual.primary} /></View>
+            <View style={styles.actionText}><Text style={styles.actionTitle}>{item.title}</Text><Text style={styles.actionCopy}>{item.copy}</Text></View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
+        ))}</View>
+
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>{content.activity}</Text><Pressable onPress={() => router.push('/reports')}><Text style={[styles.sectionLink, { color: visual.primary }]}>Ver todos</Text></Pressable></View>
+        <View style={styles.incidentList}>{visibleIncidents.map((incident) => <IncidentCard key={incident.id} incident={incident} compact />)}</View>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
-  adminScroll: { backgroundColor: '#EEF2F7' },
-  page: { padding: spacing.lg, backgroundColor: colors.background },
-  pageWide: { padding: spacing.xl },
-  shell: { width: '100%', maxWidth: 1080, alignSelf: 'center' },
-  main: { flex: 1, gap: spacing.lg },
-  header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.xl, gap: spacing.lg },
-  adminHeader: { backgroundColor: '#14243A' },
-  maintenanceHeader: { backgroundColor: '#0F4C5C' },
-  headerText: { gap: spacing.xs },
-  headerButton: { alignSelf: 'flex-start', minWidth: 190 },
-  eyebrow: { color: colors.secondary, fontWeight: '800', letterSpacing: 1.5 },
-  adminEyebrow: { color: '#E7B04B' },
-  maintenanceEyebrow: { color: '#7DD3CF' },
-  heading: { color: colors.white, fontSize: 30, fontWeight: '800', marginTop: spacing.xs },
-  copy: { color: '#DDE8D7', fontSize: 16, lineHeight: 23, marginTop: spacing.sm, maxWidth: 620 },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  stat: { flexGrow: 1, flexBasis: 145, backgroundColor: colors.white, padding: spacing.lg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.xs },
-  statWide: { flexBasis: 180 },
-  statIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
-  adminIcon: { backgroundColor: '#FFF0CF' },
-  maintenanceIcon: { backgroundColor: '#DDF6F4' },
-  statNumber: { color: colors.primary, fontSize: 26, fontWeight: '800' },
-  statLabel: { color: colors.muted },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
-  sectionTitle: { color: colors.text, fontSize: 19, fontWeight: '800' },
-  sectionMeta: { color: colors.secondary, fontSize: 12, fontWeight: '700' },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  actionCard: { flexBasis: '100%', backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  actionCardWide: { flexBasis: 260, flexGrow: 1 },
-  actionIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
-  actionText: { flex: 1 },
-  actionTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
-  actionCopy: { color: colors.muted, marginTop: spacing.xs },
-  incidentList: { gap: spacing.md }
+  scroll: { flex: 1 }, page: { padding: spacing.md, paddingBottom: spacing.xxl }, pageWide: { padding: spacing.xl }, shell: { width: '100%', maxWidth: 1120, alignSelf: 'center', gap: spacing.lg },
+  hero: { borderRadius: radius.xl, padding: spacing.lg, gap: spacing.lg, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }, heroText: { flex: 1, minWidth: 250, gap: spacing.xs },
+  eyebrow: { fontSize: 12, fontWeight: '800', letterSpacing: 1.3 }, heading: { color: colors.white, fontSize: 26, fontWeight: '800', marginTop: spacing.xs }, copy: { color: '#E5EAE4', fontSize: 15, lineHeight: 21, marginTop: spacing.xs, maxWidth: 650 }, primaryAction: { minWidth: 180 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, stat: { flexGrow: 1, flexBasis: 180, minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md, borderWidth: 1, borderColor: colors.border }, statIcon: { width: 40, height: 40, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' }, statNumber: { fontSize: 22, fontWeight: '800' }, statLabel: { color: colors.muted, fontSize: 13, marginTop: 1 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }, sectionTitle: { color: colors.text, fontSize: 18, fontWeight: '800' }, sectionMeta: { fontSize: 12, fontWeight: '700' }, sectionLink: { fontSize: 13, fontWeight: '800' },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, actionCard: { flexBasis: '100%', minHeight: 74, backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md }, actionCardWide: { flexBasis: 260, flexGrow: 1 }, actionIcon: { width: 42, height: 42, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' }, actionText: { flex: 1 }, actionTitle: { color: colors.text, fontSize: 15, fontWeight: '800' }, actionCopy: { color: colors.muted, fontSize: 13, marginTop: 2 }, incidentList: { gap: spacing.sm }
 });

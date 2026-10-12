@@ -5,7 +5,8 @@ import type { ComponentProps } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useState } from 'react';
 import { colors, radius, spacing } from '@/theme/tokens';
-import { useSession } from '@/context/SessionContext';
+import { useSession, UserRole } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -29,21 +30,32 @@ const maintenanceNavigation = [
   { name: 'index', title: 'Panel de trabajo', icon: 'construct-outline' },
   { name: 'reports', title: 'Asignaciones', icon: 'clipboard-outline' },
   { name: 'tracking', title: 'Seguimiento', icon: 'trail-sign-outline' },
+  { name: 'admin-menu', title: 'Funciones', icon: 'apps-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
-function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'citizen' | 'admin' | 'maintenance' }) {
+const employeeNavigation = [
+  { name: 'index', title: 'Bandeja', icon: 'grid-outline' },
+  { name: 'reports', title: 'Reportes del área', icon: 'file-tray-full-outline' },
+  { name: 'tracking', title: 'Procesos', icon: 'git-branch-outline' },
+  { name: 'admin-menu', title: 'Funciones', icon: 'apps-outline' },
+  { name: 'profile', title: 'Perfil', icon: 'person-outline' }
+] satisfies { name: string; title: string; icon: IconName }[];
+
+function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
   const [expanded, setExpanded] = useState(true);
   const { signOut } = useSession();
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
-  const isStaff = isAdmin || isMaintenance;
-  const items = isAdmin ? adminNavigation : isMaintenance ? maintenanceNavigation : citizenNavigation;
-  const accent = isMaintenance ? '#7DD3CF' : '#E7B04B';
+  const isEmployee = role === 'employee';
+  const isStaff = role !== 'citizen';
+  const items = isAdmin ? adminNavigation : isMaintenance ? maintenanceNavigation : isEmployee ? employeeNavigation : citizenNavigation;
+  const visual = roleVisuals[role];
+  const accent = visual.accent;
   const activeRoute = state.routes[state.index]?.name;
 
   return (
-    <View style={[styles.sidebar, !expanded && styles.sidebarCollapsed, isStaff && styles.adminSidebar, isMaintenance && styles.maintenanceSidebar]}>
+    <View style={[styles.sidebar, !expanded && styles.sidebarCollapsed, isStaff && styles.adminSidebar, { backgroundColor: isStaff ? visual.primary : colors.white }]}>
       <View style={[styles.brand, !expanded && styles.brandCollapsed]}>
         <Pressable
           accessibilityRole="button"
@@ -61,7 +73,7 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'ci
         {expanded && (
           <View style={styles.brandText}>
             <Text style={[styles.brandTitle, isStaff && styles.adminText]}>ZacApp</Text>
-            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{isAdmin ? 'Superadministración' : isMaintenance ? 'Mantenimiento · Agua' : 'Portal ciudadano'}</Text>
+            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{isMaintenance || isEmployee ? `${visual.label} · Agua potable` : visual.label}</Text>
           </View>
         )}
       </View>
@@ -108,12 +120,14 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: 'ci
 
 export default function TabsLayout() {
   const { role } = useSession();
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
-  const isStaff = isAdmin || isMaintenance;
+  const isEmployee = role === 'employee';
+  const isStaff = role !== 'citizen';
   const isWeb = Platform.OS === 'web';
-  const navigationBackground = isMaintenance ? '#0F4C5C' : isAdmin ? '#14243A' : colors.white;
-  const navigationAccent = isMaintenance ? '#7DD3CF' : isAdmin ? '#E7B04B' : colors.primary;
+  const visual = roleVisuals[role];
+  const navigationBackground = isStaff ? visual.primary : colors.white;
+  const navigationAccent = isStaff ? visual.accent : colors.primary;
   const navigationMuted = isStaff ? '#B9C5D5' : colors.muted;
 
   return (
@@ -140,19 +154,20 @@ export default function TabsLayout() {
           : {
               borderTopColor: isStaff ? '#2B4360' : colors.border,
               backgroundColor: navigationBackground,
-              height: !isAdmin ? 70 : undefined,
-              paddingBottom: !isAdmin ? 8 : undefined
+              height: 68,
+              paddingBottom: 7,
+              paddingTop: 4
             },
         tabBarItemStyle: isWeb ? { minHeight: 54, maxHeight: 54, borderRadius: 12, marginVertical: 4 } : undefined,
         tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : undefined
       }}
     >
-      <Tabs.Screen name="reports" options={{ title: isAdmin ? 'Gestionar reportes' : isMaintenance ? 'Asignaciones' : 'Mis reportes', href: isAdmin && !isWeb ? null : '/reports', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ title: 'Seguimiento', href: isAdmin && !isWeb ? null : '/tracking', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Trabajo' : 'Inicio', tabBarItemStyle: !isWeb && !isStaff ? styles.centerTabItem : undefined, tabBarIcon: ({ color, size }) => !isWeb && !isStaff ? <View style={styles.centerTabIcon}><Ionicons name="home" color={colors.white} size={size + 2} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : 'home-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="reports" options={{ title: isAdmin ? 'Reportes' : isMaintenance ? 'Asignaciones' : isEmployee ? 'Reportes del área' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ title: isEmployee ? 'Procesos' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Trabajo' : isEmployee ? 'Bandeja' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
       <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="profile" options={{ title: 'Perfil', href: isAdmin && !isWeb ? null : '/profile', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isAdmin ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="profile" options={{ title: 'Perfil', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
     </Tabs>
   );
 }
@@ -188,6 +203,6 @@ const styles = StyleSheet.create({
   logoutButton: { minHeight: 48, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.dangerSoft },
   adminLogoutButton: { backgroundColor: '#203753' },
   logoutText: { color: colors.danger, fontSize: 14, fontWeight: '800' },
-  centerTabItem: { marginTop: -10 },
+  centerTabItem: { marginTop: -9 },
   centerTabIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, borderWidth: 4, borderColor: colors.white, elevation: 5 },
 });

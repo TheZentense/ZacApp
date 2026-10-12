@@ -6,6 +6,7 @@ import { mockIncidents } from '@/data/mockIncidents';
 import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
 
 const steps = [
   { title: 'Reporte recibido', detail: 'La incidencia fue registrada en ZacApp.' },
@@ -15,25 +16,28 @@ const steps = [
 ];
 
 export default function TrackingScreen() {
-  const { department } = useSession();
+  const { role, department } = useSession();
+  const visual = roleVisuals[role];
   const [category, setCategory] = useState('Todas');
   const [selected, setSelected] = useState<Incident | null>(null);
-  const availableIncidents = useMemo(() => mockIncidents.filter((item) => !department || item.category === department), [department]);
+  const availableIncidents = useMemo(() => mockIncidents.filter((item) => department ? item.category === department : role === 'citizen' ? item.id !== '1' : true), [department, role]);
   const categories = useMemo(() => ['Todas', ...new Set(availableIncidents.map((item) => item.category))], [availableIncidents]);
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
-  return <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-    <View style={styles.header}><Text style={styles.title}>Seguimiento</Text><Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : 'Selecciona una categoría y abre el reporte que deseas consultar.'}</Text></View>
+  const heading = role === 'employee' ? 'Procesos del departamento' : role === 'maintenance' ? 'Avance de asignaciones' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
+
+  return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
+    <View style={styles.header}><Text style={[styles.title, { color: visual.primary }]}>{heading}</Text><Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : 'Selecciona una categoría y abre el reporte que deseas consultar.'}</Text></View>
     {selected ? <>
-      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={colors.primary} /><Text style={styles.backText}>Elegir otro reporte</Text></Pressable>
-      <View style={styles.caseCard}><Text style={styles.code}>{selected.code}</Text><Text style={styles.caseTitle}>{selected.title}</Text><Text style={styles.meta}>{selected.category} · {selected.location}</Text></View>
+      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Elegir otro reporte</Text></Pressable>
+      <View style={[styles.caseCard, { backgroundColor: visual.primary }]}><Text style={[styles.code, { color: visual.accent }]}>{selected.code}</Text><Text style={styles.caseTitle}>{selected.title}</Text><Text style={styles.meta}>{selected.category} · {selected.location}</Text></View>
       <View style={styles.timeline}>{steps.map((step, index) => {
         const completedSteps = selected.status === 'CERRADO' ? steps.length : selected.status === 'EN_ATENCION' ? 3 : 2;
         const done = index < completedSteps;
-        return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, !done && styles.stepIconPending]}><Ionicons name={done ? 'checkmark' : 'ellipse-outline'} size={18} color={done ? colors.white : colors.secondary} /></View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={styles.stepLine} />}</View></View>;
+        return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, { backgroundColor: done ? visual.primary : `${visual.accent}22` }]}><Ionicons name={done ? 'checkmark' : 'ellipse-outline'} size={18} color={done ? colors.white : visual.primary} /></View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={styles.stepLine} />}</View></View>;
       })}</View>
     </> : <>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && styles.filterActive]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
       <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View>
     </>}
   </ScrollView>;
