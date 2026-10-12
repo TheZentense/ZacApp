@@ -1,0 +1,36 @@
+# Dependencies and generated output
+node_modules/
+.expo/
+dist/
+web-build/
+coverage/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+
+# Local launchers and executables
+*.bat
+*.cmd
+*.exe
+*.msi
+*.ps1
+
+# Local assistant configuration
+AGENTS.md
+.cursor/
+.codex/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.swp
