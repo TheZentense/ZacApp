@@ -12,6 +12,15 @@ export type ReportCategory = {
   name: string;
 };
 
+export type ReportHistoryEntry = {
+  id: number;
+  previousStatus: IncidentStatus | null;
+  newStatus: IncidentStatus;
+  note: string | null;
+  createdAt: string;
+  changedBy: string;
+};
+
 export async function listReportCategories(): Promise<ReportCategory[]> {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
@@ -77,6 +86,16 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat('es-GT', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value));
+}
+
 function categoryName(category: IncidentRow['category']) {
   if (Array.isArray(category)) return category[0]?.name ?? 'Sin categoría';
   return category?.name ?? 'Sin categoría';
@@ -103,6 +122,31 @@ export async function listReports(): Promise<Incident[]> {
     createdAt: formatDate(incident.created_at),
     updatedAt: formatDate(incident.updated_at)
   }));
+}
+
+export async function listReportHistory(incidentId: string): Promise<ReportHistoryEntry[]> {
+  if (!supabase) throw new Error('Supabase no está configurado.');
+
+  const { data, error } = await supabase
+    .from('incident_history')
+    .select('id, previous_status, new_status, note, created_at, actor:profiles!incident_history_changed_by_fkey(full_name)')
+    .eq('incident_id', incidentId)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []).map((entry) => {
+    const actor = entry.actor as unknown as { full_name?: string } | { full_name?: string }[] | null;
+    const fullName = Array.isArray(actor) ? actor[0]?.full_name : actor?.full_name;
+    return {
+      id: entry.id,
+      previousStatus: entry.previous_status as IncidentStatus | null,
+      newStatus: entry.new_status as IncidentStatus,
+      note: entry.note,
+      createdAt: formatDateTime(entry.created_at),
+      changedBy: fullName ?? 'Personal de ZacApp'
+    };
+  });
 }
 
 type UpdateReportStatusResult = {

@@ -42,7 +42,7 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.securityCard}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Sesión protegida</Text><Text style={styles.securityCopy}>Tu acceso está conectado a la autenticación segura de ZacApp.</Text></View></View>
-        <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={() => { signOut(); router.replace('/login'); }} />
+        <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={async () => { await signOut(); router.replace('/login'); }} />
       </View>
     </ScrollView>
   );

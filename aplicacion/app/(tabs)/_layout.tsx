@@ -105,8 +105,8 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
         accessibilityRole="button"
         accessibilityLabel="Cerrar sesión"
         style={[styles.logoutButton, !expanded && styles.navItemCollapsed, isStaff && styles.adminLogoutButton]}
-        onPress={() => {
-          signOut();
+        onPress={async () => {
+          await signOut();
           router.replace('/login');
         }}
       >

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -9,6 +9,12 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { listReportHistory, type ReportHistoryEntry } from '@/services/reports';
+
+const historyStatusLabels: Record<Incident['status'], string> = {
+  REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
+  EN_ATENCION: 'En atención', POR_VERIFICAR: 'Por verificar', CERRADO: 'Resuelto', RECHAZADO: 'Rechazado'
+};
 
 const steps = [
   { title: 'Reporte recibido', detail: 'La incidencia fue registrada en ZacApp.' },
@@ -34,12 +40,32 @@ export default function TrackingScreen() {
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [category, setCategory] = useState('Todas');
   const [selected, setSelected] = useState<Incident | null>(null);
+  const [history, setHistory] = useState<ReportHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const categories = useMemo(() => ['Todas', ...new Set(availableIncidents.map((item) => item.category))], [availableIncidents]);
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
   const heading = role === 'employee' ? 'Procesos del departamento' : role === 'maintenance' ? 'Avance de asignaciones' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
   const completedSteps = selected ? completedByStatus[selected.status] : 0;
   const progress = Math.round((completedSteps / steps.length) * 100);
+
+  useEffect(() => {
+    if (!selected) {
+      setHistory([]);
+      setHistoryError('');
+      return;
+    }
+
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError('');
+    listReportHistory(selected.id)
+      .then((entries) => { if (active) setHistory(entries); })
+      .catch((historyLoadError) => { if (active) setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'No fue posible consultar el historial.'); })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+  }, [selected]);
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
     <View style={[styles.header, { backgroundColor: visual.primary }]}>
@@ -57,6 +83,13 @@ export default function TrackingScreen() {
         const done = index < completedSteps;
         return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, { backgroundColor: done ? visual.primary : `${visual.accent}22` }]}>{done ? <Ionicons name="checkmark" size={18} color={colors.white} /> : <Text style={[styles.stepNumber, { color: visual.primary }]}>{index + 1}</Text>}</View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={[styles.stepLine, { backgroundColor: done ? `${visual.primary}55` : colors.border }]} />}</View></View>;
       })}</View>
+      <View style={styles.historyCard}>
+        <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>TRAZABILIDAD REAL</Text><Text style={styles.historyTitle}>Historial del reporte</Text></View><Ionicons name="time-outline" size={23} color={visual.primary} /></View>
+        {historyLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Consultando movimientos...</Text></View> : historyError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{historyError}</Text></View> : <View style={styles.historyList}>
+          <View style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>Reporte registrado</Text><Text style={styles.historyMeta}>{selected.createdAt} · Ciudadanía</Text></View></View>
+          {history.map((entry) => <View key={entry.id} style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: entry.newStatus === 'CERRADO' ? colors.accent : visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>{entry.previousStatus ? `${historyStatusLabels[entry.previousStatus]} → ` : ''}{historyStatusLabels[entry.newStatus]}</Text><Text style={styles.historyMeta}>{entry.createdAt} · {entry.changedBy}</Text>{entry.note ? <Text style={styles.historyNote}>{entry.note}</Text> : null}</View></View>)}
+        </View>}
+      </View>
     </> : <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
       {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View> : <EmptyState title="Sin reportes disponibles" description="No hay casos para la categoría seleccionada." />}
@@ -101,5 +134,20 @@ const styles = StyleSheet.create({
   stepContent: { flex: 1, paddingBottom: spacing.md },
   stepTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
   stepDetail: { color: colors.muted, marginTop: spacing.xs, lineHeight: 20 },
-  stepLine: { position: 'absolute', left: -31, top: 40, bottom: -10, width: 2, backgroundColor: colors.border }
+  stepLine: { position: 'absolute', left: -31, top: 40, bottom: -10, width: 2, backgroundColor: colors.border },
+  historyCard: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
+  historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
+  historyKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.1 },
+  historyTitle: { color: colors.text, fontSize: 19, fontWeight: '800', marginTop: 2 },
+  historyLoading: { minHeight: 90, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  historyMuted: { color: colors.muted, fontSize: 13 },
+  historyError: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md, flexDirection: 'row', gap: spacing.sm },
+  historyErrorText: { flex: 1, color: colors.danger, lineHeight: 19 },
+  historyList: { gap: 0 },
+  historyItem: { minHeight: 70, flexDirection: 'row', gap: spacing.md },
+  historyDot: { width: 12, height: 12, borderRadius: 6, marginTop: 5 },
+  historyBody: { flex: 1, paddingBottom: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
+  historyState: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  historyMeta: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  historyNote: { color: colors.text, lineHeight: 19, marginTop: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.sm, padding: spacing.sm }
 });
