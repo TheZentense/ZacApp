@@ -8,14 +8,15 @@ type Props = {
   variant?: 'primary' | 'secondary' | 'ghost';
   icon?: keyof typeof Ionicons.glyphMap;
   style?: ViewStyle;
+  disabled?: boolean;
 };
 
-export function AppButton({ label, onPress, variant = 'primary', icon, style }: Props) {
+export function AppButton({ label, onPress, variant = 'primary', icon, style, disabled = false }: Props) {
   const secondary = variant === 'secondary';
   const ghost = variant === 'ghost';
 
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondary, ghost && styles.ghost, pressed && styles.pressed, style]}>
+    <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled }} onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.secondary, ghost && styles.ghost, disabled && styles.disabled, pressed && !disabled && styles.pressed, style]}>
       {icon && <Ionicons name={icon} size={20} color={secondary || ghost ? colors.primary : colors.white} />}
       <Text style={[styles.label, (secondary || ghost) && styles.secondaryLabel]}>{label}</Text>
     </Pressable>
@@ -37,5 +38,6 @@ const styles = StyleSheet.create({
   ghost: { backgroundColor: colors.softGreen },
   label: { color: colors.white, fontSize: 16, fontWeight: '700' },
   secondaryLabel: { color: colors.primary },
-  pressed: { opacity: 0.82 }
+  pressed: { opacity: 0.82 },
+  disabled: { opacity: 0.48 }
 });

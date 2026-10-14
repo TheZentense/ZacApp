@@ -1,60 +1,132 @@
-import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
-import type { MaintenanceDepartment } from '@/types/domain';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import type { User } from '@supabase/supabase-js';
+import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
-export type UserRole = 'citizen' | 'admin' | 'maintenance';
+export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 
 type SessionContextValue = {
   role: UserRole;
   email: string;
-  department: MaintenanceDepartment | null;
-  signIn: (email: string) => void;
-  signOut: () => void;
-  setDemoRole: (role: UserRole, department?: MaintenanceDepartment | null) => void;
+  fullName: string;
+  department: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<boolean>;
+  signOut: () => Promise<void>;
 };
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('citizen');
-  const [email, setEmail] = useState('ciudadano@zacapp.gt');
-  const [department, setDepartment] = useState<MaintenanceDepartment | null>(null);
+  const [email, setEmail] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [department, setDepartment] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(Boolean(supabase));
+
+  const applyEmailFallback = useCallback((value?: string | null) => {
+    const normalizedEmail = value?.trim().toLowerCase() ?? '';
+    setEmail(normalizedEmail);
+    setIsAuthenticated(Boolean(normalizedEmail));
+
+    if (normalizedEmail.startsWith('superadmin')) {
+      setRole('superadmin');
+      setDepartment(null);
+    } else if (normalizedEmail.startsWith('admin')) {
+      setRole('admin');
+      setDepartment(null);
+    } else if (normalizedEmail.includes('mantenimiento.agua')) {
+      setRole('maintenance');
+      setDepartment('Agua potable');
+    } else if (normalizedEmail.includes('empleado.agua')) {
+      setRole('employee');
+      setDepartment('Agua potable');
+    } else {
+      setRole('citizen');
+      setDepartment(null);
+    }
+  }, []);
+
+  const hydrateIdentity = useCallback(async (user?: User | null) => {
+    if (!user) {
+      applyEmailFallback(null);
+      setFullName('');
+      return;
+    }
+
+    applyEmailFallback(user.email);
+    setFullName(typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '');
+    if (!supabase) return;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('full_name, role, department:departments(name)')
+      .eq('id', user.id)
+      .single();
+
+    if (error || !data) return;
+    const databaseRole = data.role as string;
+    const departmentData = data.department as unknown as { name?: string } | { name?: string }[] | null;
+    const departmentName = Array.isArray(departmentData) ? departmentData[0]?.name : departmentData?.name;
+    const normalizedEmail = user.email?.trim().toLowerCase() ?? '';
+
+    if (normalizedEmail.startsWith('superadmin')) setRole('superadmin');
+    else if (databaseRole === 'administrador' || databaseRole === 'supervisor') setRole('admin');
+    else if (databaseRole === 'mantenimiento') setRole('maintenance');
+    else if (['operador', 'coordinador', 'comunicacion'].includes(databaseRole)) setRole('employee');
+    else setRole('citizen');
+
+    setFullName(data.full_name || '');
+    setDepartment(departmentName ?? null);
+  }, [applyEmailFallback]);
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      await hydrateIdentity(data.session?.user);
+      setIsLoading(false);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      hydrateIdentity(session?.user).finally(() => setIsLoading(false));
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, [hydrateIdentity]);
 
   const value = useMemo(
     () => ({
       role,
       email,
+      fullName,
       department,
-      signIn: (value: string) => {
-        const normalizedEmail = value.trim().toLowerCase();
-        setEmail(normalizedEmail);
-        if (normalizedEmail.startsWith('superadmin') || normalizedEmail.startsWith('admin')) {
-          setRole('admin');
-          setDepartment(null);
-        } else if (normalizedEmail.includes('mantenimiento.agua')) {
-          setRole('maintenance');
-          setDepartment('Agua');
-        } else if (normalizedEmail.includes('mantenimiento.eemza')) {
-          setRole('maintenance');
-          setDepartment('EEMZA');
-        } else {
-          setRole('citizen');
-          setDepartment(null);
-        }
+      isAuthenticated,
+      isLoading,
+      signIn: async (value: string, password: string) => {
+        if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
+        const { data, error } = await supabase.auth.signInWithPassword({ email: value.trim().toLowerCase(), password });
+        if (error) throw error;
+        await hydrateIdentity(data.user);
       },
-      signOut: () => {
-        setRole('citizen');
-        setEmail('ciudadano@zacapp.gt');
-        setDepartment(null);
+      signUp: async (name: string, value: string, password: string) => {
+        if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
+        const { data, error } = await supabase.auth.signUp({
+          email: value.trim().toLowerCase(),
+          password,
+          options: { data: { full_name: name.trim(), role: 'citizen' } }
+        });
+        if (error) throw error;
+        return Boolean(data.session);
       },
-      setDemoRole: (nextRole: UserRole, nextDepartment: MaintenanceDepartment | null = null) => {
-        setRole(nextRole);
-        setDepartment(nextRole === 'maintenance' ? nextDepartment ?? 'Agua' : null);
-        if (nextRole === 'admin') setEmail('admin@zacapp.gt');
-        else if (nextRole === 'maintenance') setEmail(nextDepartment === 'EEMZA' ? 'mantenimiento.eemza@zacapp.gt' : 'mantenimiento.agua@zacapp.gt');
-        else setEmail('ciudadano@zacapp.gt');
+      signOut: async () => {
+        if (supabase) await supabase.auth.signOut();
+        await hydrateIdentity(null);
       }
     }),
-    [department, email, role]
+    [department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, role]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
