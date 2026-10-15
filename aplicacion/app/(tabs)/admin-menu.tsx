@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing } from '@/theme/tokens';
@@ -8,30 +8,24 @@ import { roleVisuals } from '@/theme/roles';
 const functions = [
   { title: 'Gestionar reportes', copy: 'Consultar y actualizar incidencias', icon: 'document-text-outline', route: '/reports' },
   { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Asignaciones', copy: 'Distribuir reportes entre las áreas responsables', icon: 'git-branch-outline' },
-  { title: 'Usuarios', copy: 'Administrar cuentas y accesos', icon: 'people-outline' },
-  { title: 'Roles y permisos', copy: 'Definir funciones del personal', icon: 'shield-checkmark-outline' },
-  { title: 'Categorías', copy: 'Organizar los tipos de incidencias', icon: 'pricetags-outline' },
-  { title: 'Áreas municipales', copy: 'Organizar departamentos y responsables', icon: 'business-outline' },
-  { title: 'Notificaciones', copy: 'Gestionar avisos y comunicaciones', icon: 'notifications-outline' },
-  { title: 'Reportes y métricas', copy: 'Consultar indicadores de atención', icon: 'bar-chart-outline' },
-  { title: 'Configuración', copy: 'Administrar preferencias del sistema', icon: 'settings-outline' },
+  { title: 'Asignaciones', copy: 'Distribuir reportes entre áreas y responsables', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Panel operativo', copy: 'Consultar indicadores y carga departamental', icon: 'bar-chart-outline', route: '/' },
   { title: 'Mi perfil', copy: 'Consultar la sesión administrativa', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 const maintenanceFunctions = [
   { title: 'Trabajo asignado', copy: 'Consultar órdenes del departamento', icon: 'clipboard-outline', route: '/reports' },
-  { title: 'Actualizar estado', copy: 'Registrar el avance de una atención', icon: 'sync-outline', route: '/tracking' },
-  { title: 'Agregar evidencia', copy: 'Documentar el trabajo realizado', icon: 'camera-outline' },
-  { title: 'Ubicación', copy: 'Consultar el punto de atención', icon: 'location-outline' },
+  { title: 'Actualizar estado', copy: 'Registrar el avance de una atención', icon: 'sync-outline', route: '/reports' },
+  { title: 'Evidencia e historial', copy: 'Consultar fotografías y movimientos', icon: 'camera-outline', route: '/tracking' },
+  { title: 'Ubicaciones', copy: 'Consultar los puntos de atención', icon: 'location-outline', route: '/reports' },
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 const employeeFunctions = [
   { title: 'Bandeja departamental', copy: 'Revisar reportes recibidos', icon: 'file-tray-full-outline', route: '/reports' },
-  { title: 'Validar reportes', copy: 'Confirmar información y categoría', icon: 'checkmark-done-outline', route: '/tracking' },
-  { title: 'Canalizar', copy: 'Enviar casos al equipo responsable', icon: 'git-branch-outline' },
-  { title: 'Historial del área', copy: 'Consultar movimientos del departamento', icon: 'time-outline' },
+  { title: 'Validar reportes', copy: 'Confirmar información y categoría', icon: 'checkmark-done-outline', route: '/reports' },
+  { title: 'Canalizar', copy: 'Enviar casos al equipo responsable', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Historial del área', copy: 'Consultar movimientos del departamento', icon: 'time-outline', route: '/tracking' },
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
@@ -46,8 +40,7 @@ export default function AdminMenuScreen() {
   if (role === 'citizen') return <Redirect href="/services" />;
 
   const openFunction = (item: (typeof visibleFunctions)[number]) => {
-    if ('route' in item) return router.push(item.route);
-    Alert.alert(item.title, 'Módulo en preparación.');
+    router.push(item.route);
   };
 
   return (

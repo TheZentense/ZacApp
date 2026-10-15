@@ -25,6 +25,8 @@ export type Incident = {
   citizenName: string;
   citizenEmail: string;
   department: MaintenanceDepartment;
+  departmentId?: number | null;
+  assignedToId?: string | null;
   priority: IncidentPriority;
   progress: number;
   evidenceAttached?: boolean;

@@ -14,17 +14,23 @@ const statusStyles = {
   RECHAZADO: { label: 'Rechazado', backgroundColor: colors.dangerSoft, color: colors.danger }
 } as const;
 
+const priorityStyles = {
+  BAJA: { label: 'Baja', backgroundColor: colors.surface, color: colors.muted },
+  MEDIA: { label: 'Media', backgroundColor: colors.infoSoft, color: colors.info },
+  ALTA: { label: 'Alta', backgroundColor: colors.warningSoft, color: colors.warning },
+  URGENTE: { label: 'Urgente', backgroundColor: colors.dangerSoft, color: colors.danger }
+} as const;
+
 export function IncidentCard({ incident, onPress, compact = false }: { incident: Incident; onPress?: () => void; compact?: boolean }) {
   const status = statusStyles[incident.status];
+  const priority = priorityStyles[incident.priority];
   const categoryIcon = incident.category === 'Agua potable' ? 'water-outline' : incident.category === 'Alumbrado público' ? 'bulb-outline' : incident.category === 'Limpieza' ? 'trash-outline' : 'location-outline';
 
   return (
     <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [styles.card, compact && styles.compactCard, pressed && styles.pressed]}>
       <View style={styles.row}>
         <Text style={styles.code}>{incident.code}</Text>
-        <View style={[styles.badge, { backgroundColor: status.backgroundColor }]}>
-          <Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text>
-        </View>
+        <View style={styles.badgeGroup}><View style={[styles.badge, { backgroundColor: priority.backgroundColor }]}><Text style={[styles.badgeText, { color: priority.color }]}>{priority.label}</Text></View><View style={[styles.badge, { backgroundColor: status.backgroundColor }]}><Text style={[styles.badgeText, { color: status.color }]}>{status.label}</Text></View></View>
       </View>
       <View style={styles.titleRow}>
         <View style={styles.categoryIcon}><Ionicons name={categoryIcon} size={18} color={colors.primary} /></View>
@@ -52,6 +58,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
   code: { color: colors.muted, fontWeight: '700' },
   badge: { borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
+  badgeGroup: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing.xs },
   badgeText: { fontSize: 12, fontWeight: '800' },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   categoryIcon: { width: 34, height: 34, borderRadius: 12, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },

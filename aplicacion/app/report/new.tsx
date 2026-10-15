@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { ErrorState, LoadingState } from '@/components/DataState';
-import { createReport, listReportCategories, type ReportCategory } from '@/services/reports';
+import { createReport, listReportCategories, uploadReportEvidence, type ReportCategory, type ReportEvidenceInput } from '@/services/reports';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
@@ -28,6 +30,14 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
   return 'apps-outline';
 }
 
+async function optimizeEvidence(uri: string): Promise<ReportEvidenceInput> {
+  const context = ImageManipulator.manipulate(uri);
+  context.resize({ width: 1600, height: null });
+  const rendered = await context.renderAsync();
+  const result = await rendered.saveAsync({ compress: 0.72, format: SaveFormat.JPEG });
+  return { uri: result.uri, mimeType: 'image/jpeg' };
+}
+
 export default function NewReportScreen() {
   const { role } = useSession();
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
@@ -37,9 +47,14 @@ export default function NewReportScreen() {
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [evidence, setEvidence] = useState<ReportEvidenceInput | null>(null);
+  const [evidenceUploadError, setEvidenceUploadError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
 
   const loadCategories = useCallback(async () => {
     if (!isSupabaseConfigured) return;
@@ -62,9 +77,57 @@ export default function NewReportScreen() {
   }, [loadCategories]);
 
   const openCamera = async () => {
-    if (!cameraPermission?.granted) await requestCameraPermission();
+    const permission = cameraPermission?.granted ? cameraPermission : await requestCameraPermission();
+    if (!permission.granted) return Alert.alert('Permiso requerido', 'Permite el acceso a la cámara para tomar una fotografía.');
+    setCameraReady(false);
     setCameraOpen(true);
   };
+
+  const captureEvidence = async () => {
+    if (!cameraRef.current || !cameraReady || isCapturing) return;
+    try {
+      setIsCapturing(true);
+      const picture = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      if (!picture?.uri) throw new Error('La cámara no devolvió una fotografía.');
+      setEvidence(await optimizeEvidence(picture.uri));
+      setEvidenceUploadError('');
+      setCameraOpen(false);
+    } catch (error) {
+      Alert.alert('No fue posible tomar la fotografía', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const selectEvidence = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 1,
+        selectionLimit: 1
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+      setEvidence(await optimizeEvidence(result.assets[0].uri));
+      setEvidenceUploadError('');
+    } catch (error) {
+      Alert.alert('No fue posible seleccionar la fotografía', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    }
+  };
+
+  const retryEvidenceUpload = async () => {
+    if (!createdIncident || !evidence || isSubmitting) return;
+    try {
+      setIsSubmitting(true);
+      setEvidenceUploadError('');
+      await uploadReportEvidence(createdIncident.id, evidence);
+    } catch (error) {
+      setEvidenceUploadError(error instanceof Error ? error.message : 'No fue posible adjuntar la fotografía.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const submit = async () => {
     if (!category || !description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega la descripción y ubicación.');
     if (isSubmitting) return;
@@ -72,6 +135,14 @@ export default function NewReportScreen() {
     try {
       setIsSubmitting(true);
       const incident = await createReport({ categoryName: category, description, location });
+      if (evidence) {
+        try {
+          await uploadReportEvidence(incident.id, evidence);
+          setEvidenceUploadError('');
+        } catch (error) {
+          setEvidenceUploadError(error instanceof Error ? error.message : 'El reporte se registró, pero la fotografía quedó pendiente.');
+        }
+      }
       setCreatedIncident(incident);
     } catch (error) {
       Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Intenta nuevamente.');
@@ -100,7 +171,10 @@ export default function NewReportScreen() {
           <View style={styles.summaryRow}><Ionicons name="apps-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Categoría</Text><Text style={styles.summaryValue}>{category}</Text></View></View>
           <View style={styles.summaryRow}><Ionicons name="location-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Ubicación</Text><Text style={styles.summaryValue}>{location}</Text></View></View>
           <View style={styles.summaryRow}><Ionicons name="time-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Estado inicial</Text><Text style={styles.summaryValue}>Registrado</Text></View></View>
+          {evidence && <View style={styles.summaryRow}><Ionicons name={evidenceUploadError ? 'alert-circle-outline' : 'image-outline'} size={19} color={evidenceUploadError ? colors.danger : colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Evidencia</Text><Text style={[styles.summaryValue, evidenceUploadError && styles.evidenceErrorText]}>{evidenceUploadError ? 'Pendiente de subir' : 'Fotografía adjunta'}</Text></View></View>}
         </View>
+
+        {evidenceUploadError ? <View style={styles.uploadError}><Text style={styles.uploadErrorTitle}>El reporte sí fue registrado</Text><Text style={styles.uploadErrorCopy}>La fotografía no pudo adjuntarse. Puedes reintentar sin crear otro reporte.</Text><AppButton label={isSubmitting ? 'Subiendo...' : 'Reintentar fotografía'} icon="cloud-upload-outline" disabled={isSubmitting} onPress={retryEvidenceUpload} /></View> : null}
 
         <View style={styles.confirmationActions}>
           <AppButton label="Ver mis reportes" icon="documents-outline" onPress={() => router.replace('/reports')} />
@@ -149,14 +223,21 @@ export default function NewReportScreen() {
 
         <View style={styles.divider} />
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>03</Text></View><View><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Una fotografía puede facilitar la validación.</Text></View></View>
-        <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={openCamera}>
-          <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View>
-          <View style={styles.cameraButtonText}>
-            <Text style={styles.cameraButtonTitle}>Abrir cámara</Text>
-            <Text style={styles.cameraButtonCopy}>Toma una fotografía desde el dispositivo.</Text>
+        {evidence ? (
+          <View style={styles.evidenceCard}>
+            <Image source={{ uri: evidence.uri }} style={styles.evidencePreview} />
+            <View style={styles.evidenceDetails}><Text style={styles.evidenceTitle}>Fotografía lista</Text><Text style={styles.evidenceCopy}>Se comprimió para reducir el uso de datos y se adjuntará al enviar.</Text><View style={styles.evidenceActions}><Pressable onPress={openCamera} style={styles.inlineAction}><Ionicons name="camera-outline" size={18} color={colors.primary} /><Text style={styles.inlineActionText}>Repetir</Text></Pressable><Pressable onPress={selectEvidence} style={styles.inlineAction}><Ionicons name="images-outline" size={18} color={colors.primary} /><Text style={styles.inlineActionText}>Cambiar</Text></Pressable><Pressable onPress={() => setEvidence(null)} style={styles.inlineAction}><Ionicons name="trash-outline" size={18} color={colors.danger} /><Text style={styles.removeActionText}>Quitar</Text></Pressable></View></View>
           </View>
-          <Ionicons name="arrow-forward" size={18} color={colors.primary} />
-        </Pressable>
+        ) : (
+          <View style={styles.evidenceOptions}>
+            <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={openCamera}>
+              <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Tomar fotografía</Text><Text style={styles.cameraButtonCopy}>Usa la cámara del dispositivo.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+            </Pressable>
+            <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} onPress={selectEvidence}>
+              <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Selecciona una imagen existente.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+            </Pressable>
+          </View>
+        )}
 
         <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>El reporte quedará asociado únicamente a tu cuenta.</Text></View><AppButton disabled={isSubmitting || categoriesLoading || !category} label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
         <AppButton label="Cancelar" variant="ghost" icon="close-outline" onPress={() => router.back()} />
@@ -165,16 +246,16 @@ export default function NewReportScreen() {
       <Modal visible={cameraOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setCameraOpen(false)}>
         <View style={styles.cameraPage}>
           {cameraPermission?.granted ? (
-            <CameraView style={styles.cameraPreview} facing="back">
+            <CameraView ref={cameraRef} style={styles.cameraPreview} facing="back" onCameraReady={() => setCameraReady(true)}>
               <View style={styles.cameraOverlay}>
                 <Pressable style={styles.closeCamera} onPress={() => setCameraOpen(false)}>
                   <Ionicons name="close" size={24} color={colors.white} />
                   <Text style={styles.closeCameraText}>Salir</Text>
                 </Pressable>
-                <Pressable style={styles.shutter} onPress={() => Alert.alert('Captura no disponible', 'El almacenamiento de fotografías aún no está configurado.') }>
+                <Pressable disabled={!cameraReady || isCapturing} style={[styles.shutter, (!cameraReady || isCapturing) && styles.shutterDisabled]} onPress={captureEvidence}>
                   <View style={styles.shutterCenter} />
                 </Pressable>
-                <Text style={styles.cameraNote}>Vista previa de cámara · sin almacenamiento</Text>
+                <Text style={styles.cameraNote}>{isCapturing ? 'Procesando fotografía...' : cameraReady ? 'Centra la incidencia y presiona el botón' : 'Preparando cámara...'}</Text>
               </View>
             </CameraView>
           ) : (
@@ -229,10 +310,21 @@ const styles = StyleSheet.create({
   inlineInput: { flex: 1, minHeight: 50, fontSize: 16, color: colors.text },
   multiline: { minHeight: 120, textAlignVertical: 'top' },
   cameraButton: { minHeight: 82, backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  evidenceOptions: { gap: spacing.sm },
   cameraIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  galleryIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   cameraButtonText: { flex: 1 },
   cameraButtonTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cameraButtonCopy: { color: colors.muted, fontSize: 12, marginTop: spacing.xs },
+  evidenceCard: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: colors.surface },
+  evidencePreview: { width: '100%', height: 240, resizeMode: 'cover', backgroundColor: colors.softGreen },
+  evidenceDetails: { padding: spacing.md, gap: spacing.xs },
+  evidenceTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
+  evidenceCopy: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+  evidenceActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  inlineAction: { minHeight: 40, paddingHorizontal: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  inlineActionText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+  removeActionText: { color: colors.danger, fontSize: 12, fontWeight: '800' },
   formFooter: { marginTop: spacing.md, gap: spacing.md },
   privacyNote: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   privacyText: { flex: 1, color: colors.muted, fontSize: 12, lineHeight: 17 },
@@ -243,6 +335,7 @@ const styles = StyleSheet.create({
   closeCamera: { alignSelf: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: radius.pill, paddingHorizontal: spacing.md, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   closeCameraText: { color: colors.white, fontWeight: '800' },
   shutter: { width: 78, height: 78, borderRadius: 39, borderWidth: 5, borderColor: colors.white, alignItems: 'center', justifyContent: 'center', marginTop: 'auto' },
+  shutterDisabled: { opacity: 0.48 },
   shutterCenter: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.white },
   cameraNote: { color: colors.white, backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginTop: spacing.lg, overflow: 'hidden' },
   permissionPage: { flex: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.md, backgroundColor: colors.background },
@@ -263,5 +356,9 @@ const styles = StyleSheet.create({
   summaryText: { flex: 1 },
   summaryLabel: { color: colors.muted, fontSize: 11, fontWeight: '700' },
   summaryValue: { color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
+  evidenceErrorText: { color: colors.danger },
+  uploadError: { width: '100%', maxWidth: 520, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.danger, backgroundColor: colors.dangerSoft, padding: spacing.md, gap: spacing.sm },
+  uploadErrorTitle: { color: colors.danger, fontSize: 15, fontWeight: '900' },
+  uploadErrorCopy: { color: colors.text, fontSize: 13, lineHeight: 19 },
   confirmationActions: { width: '100%', maxWidth: 520, gap: spacing.sm, marginTop: spacing.sm }
 });

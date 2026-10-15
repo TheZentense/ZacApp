@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -9,7 +9,7 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
-import { listReportHistory, type ReportHistoryEntry } from '@/services/reports';
+import { listReportEvidence, listReportHistory, type ReportEvidence, type ReportHistoryEntry } from '@/services/reports';
 
 const historyStatusLabels: Record<Incident['status'], string> = {
   REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
@@ -43,6 +43,9 @@ export default function TrackingScreen() {
   const [history, setHistory] = useState<ReportHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [evidence, setEvidence] = useState<ReportEvidence[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
   const categories = useMemo(() => ['Todas', ...new Set(availableIncidents.map((item) => item.category))], [availableIncidents]);
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
@@ -53,21 +56,35 @@ export default function TrackingScreen() {
   const selectReport = async (incident: Incident) => {
     setSelected(incident);
     setHistoryLoading(true);
+    setEvidenceLoading(true);
     setHistoryError('');
-    try {
-      setHistory(await listReportHistory(incident.id));
-    } catch (historyLoadError) {
+    setEvidenceError('');
+    const [historyResult, evidenceResult] = await Promise.allSettled([
+      listReportHistory(incident.id),
+      listReportEvidence(incident.id)
+    ]);
+
+    if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
+    else {
       setHistory([]);
-      setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'No fue posible consultar el historial.');
-    } finally {
-      setHistoryLoading(false);
+      setHistoryError(historyResult.reason instanceof Error ? historyResult.reason.message : 'No fue posible consultar el historial.');
     }
+
+    if (evidenceResult.status === 'fulfilled') setEvidence(evidenceResult.value);
+    else {
+      setEvidence([]);
+      setEvidenceError(evidenceResult.reason instanceof Error ? evidenceResult.reason.message : 'No fue posible consultar la evidencia.');
+    }
+    setHistoryLoading(false);
+    setEvidenceLoading(false);
   };
 
   const clearSelection = () => {
     setSelected(null);
     setHistory([]);
     setHistoryError('');
+    setEvidence([]);
+    setEvidenceError('');
   };
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
@@ -86,6 +103,10 @@ export default function TrackingScreen() {
         const done = index < completedSteps;
         return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, { backgroundColor: done ? visual.primary : `${visual.accent}22` }]}>{done ? <Ionicons name="checkmark" size={18} color={colors.white} /> : <Text style={[styles.stepNumber, { color: visual.primary }]}>{index + 1}</Text>}</View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={[styles.stepLine, { backgroundColor: done ? `${visual.primary}55` : colors.border }]} />}</View></View>;
       })}</View>
+      <View style={styles.evidenceCard}>
+        <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>ARCHIVOS DEL CASO</Text><Text style={styles.historyTitle}>Evidencia fotográfica</Text></View><Ionicons name="images-outline" size={23} color={visual.primary} /></View>
+        {evidenceLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Preparando fotografías...</Text></View> : evidenceError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{evidenceError}</Text></View> : evidence.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.evidenceList}>{evidence.map((item) => <View key={item.id} style={styles.evidenceItem}><Image source={{ uri: item.url }} style={styles.evidenceImage} /><View style={styles.evidenceMeta}><Ionicons name="shield-checkmark-outline" size={15} color={colors.secondary} /><Text style={styles.evidenceDate}>{item.createdAt}</Text></View></View>)}</ScrollView> : <View style={styles.noEvidence}><Ionicons name="image-outline" size={28} color={colors.muted} /><View style={styles.noEvidenceText}><Text style={styles.noEvidenceTitle}>Sin fotografías adjuntas</Text><Text style={styles.historyMuted}>Este reporte todavía no cuenta con evidencia visual.</Text></View></View>}
+      </View>
       <View style={styles.historyCard}>
         <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>TRAZABILIDAD REAL</Text><Text style={styles.historyTitle}>Historial del reporte</Text></View><Ionicons name="time-outline" size={23} color={visual.primary} /></View>
         {historyLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Consultando movimientos...</Text></View> : historyError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{historyError}</Text></View> : <View style={styles.historyList}>
@@ -130,6 +151,15 @@ const styles = StyleSheet.create({
   rejectedTitle: { color: colors.danger, fontSize: 15, fontWeight: '800' },
   rejectedCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
   timeline: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
+  evidenceCard: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
+  evidenceList: { gap: spacing.md, paddingRight: spacing.xs },
+  evidenceItem: { width: 280, borderRadius: radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  evidenceImage: { width: '100%', height: 190, resizeMode: 'cover', backgroundColor: colors.softGreen },
+  evidenceMeta: { minHeight: 42, paddingHorizontal: spacing.sm, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  evidenceDate: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  noEvidence: { minHeight: 86, borderRadius: radius.lg, backgroundColor: colors.surface, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  noEvidenceText: { flex: 1, gap: spacing.xs },
+  noEvidenceTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
   step: { flexDirection: 'row', gap: spacing.md },
   stepIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   stepNumber: { fontSize: 13, fontWeight: '900' },

@@ -1,18 +1,19 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
 const services = [
-  { title: 'Mapa de incidencias', copy: 'Consulta reportes cercanos y zonas de atención.', icon: 'map-outline' },
-  { title: 'Notificaciones', copy: 'Revisa avisos y cambios de estado importantes.', icon: 'notifications-outline' },
-  { title: 'Directorio municipal', copy: 'Encuentra áreas y medios de contacto.', icon: 'call-outline' },
-  { title: 'Guía ciudadana', copy: 'Conoce cómo registrar y dar seguimiento a un caso.', icon: 'book-outline' },
-  { title: 'Centro de ayuda', copy: 'Consulta respuestas y canales de asistencia.', icon: 'help-circle-outline' },
-  { title: 'Preferencias', copy: 'Configura avisos y opciones de la aplicación.', icon: 'options-outline' }
-] satisfies { title: string; copy: string; icon: IconName }[];
+  { title: 'Registrar incidencia', copy: 'Envía la descripción, ubicación y evidencia del caso.', icon: 'add-circle-outline', route: '/report/new' },
+  { title: 'Mis reportes', copy: 'Consulta únicamente las incidencias enviadas desde tu cuenta.', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Seguimiento', copy: 'Revisa las etapas, fotografías y movimientos de cada caso.', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Estados del proceso', copy: 'Conoce el avance actual mediante la trazabilidad del reporte.', icon: 'git-branch-outline', route: '/tracking' },
+  { title: 'Datos de mi cuenta', copy: 'Consulta tu identidad y la información de la sesión.', icon: 'person-outline', route: '/profile' },
+  { title: 'Actividad reciente', copy: 'Regresa al inicio para revisar tus últimos movimientos.', icon: 'pulse-outline', route: '/' }
+] satisfies { title: string; copy: string; icon: IconName; route: '/report/new' | '/reports' | '/tracking' | '/profile' | '/' }[];
 
 export default function ServicesScreen() {
   return (
@@ -32,7 +33,7 @@ export default function ServicesScreen() {
       <View><Text style={styles.sectionKicker}>RECURSOS DISPONIBLES</Text><Text style={styles.sectionTitle}>Todo lo que necesitas</Text></View>
       <View style={styles.grid}>
         {services.map((service, index) => (
-          <Pressable key={service.title} style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={() => Alert.alert(service.title, 'Módulo en preparación.')}>
+          <Pressable key={service.title} style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={() => router.push(service.route)}>
             <View style={styles.cardIndex}><Text style={styles.cardIndexText}>{String(index + 1).padStart(2, '0')}</Text></View>
             <View style={styles.icon}><Ionicons name={service.icon} size={24} color={colors.white} /></View>
             <View style={styles.cardText}>

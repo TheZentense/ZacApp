@@ -130,6 +130,18 @@ export default function HomeScreen() {
   const visibleIncidents = incidents.slice(0, 2);
   const reportStats = useMemo(() => buildReportStats(role, incidents), [incidents, role]);
   const reportPulse = useMemo(() => buildReportPulse(role, incidents, content.pulse), [content.pulse, incidents, role]);
+  const departmentWorkload = useMemo(() => {
+    const totals = new Map<string, number>();
+    incidents.filter((item) => item.status !== 'CERRADO' && item.status !== 'RECHAZADO').forEach((item) => totals.set(item.department, (totals.get(item.department) ?? 0) + 1));
+    return Array.from(totals, ([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+  }, [incidents]);
+  const maximumDepartmentWorkload = Math.max(...departmentWorkload.map((item) => item.total), 1);
+  const priorityIncident = useMemo(() => incidents
+    .filter((item) => item.status !== 'CERRADO' && item.status !== 'RECHAZADO')
+    .sort((a, b) => ['URGENTE', 'ALTA', 'MEDIA', 'BAJA'].indexOf(a.priority) - ['URGENTE', 'ALTA', 'MEDIA', 'BAJA'].indexOf(b.priority))[0], [incidents]);
+  const dashboardCopy = (role === 'maintenance' || role === 'employee') && department
+    ? role === 'maintenance' ? `Atiende únicamente las órdenes asignadas al equipo de ${department}.` : `Revisa y canaliza únicamente los reportes correspondientes a ${department}.`
+    : content.copy;
 
   return (
     <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>
@@ -146,7 +158,7 @@ export default function HomeScreen() {
             </View>
             <View style={styles.heroText}>
               <Text style={styles.heading}>{content.title}</Text>
-              <Text style={styles.copy}>{content.copy}</Text>
+              <Text style={styles.copy}>{dashboardCopy}</Text>
             </View>
             {role === 'citizen' && <AppButton label="Nuevo reporte" icon="add-circle-outline" onPress={() => router.push('/report/new')} style={styles.primaryAction} />}
           </View>
@@ -182,6 +194,17 @@ export default function HomeScreen() {
           </View>
         ))}</View>
 
+        {(role === 'admin' || role === 'superadmin') && <View style={styles.operationsPanel}>
+          <View style={styles.operationsHeader}><View><Text style={styles.sectionKicker}>DISTRIBUCIÓN OPERATIVA</Text><Text style={styles.sectionTitle}>Carga activa por departamento</Text></View><Pressable style={[styles.viewAll, { borderColor: visual.primary }]} onPress={() => router.push('/reports')}><Text style={[styles.sectionLink, { color: visual.primary }]}>Administrar</Text><Ionicons name="arrow-forward" size={15} color={visual.primary} /></Pressable></View>
+          {departmentWorkload.length ? <View style={styles.workloadList}>{departmentWorkload.map((item) => <View key={item.name} style={styles.workloadRow}><View style={styles.workloadMeta}><Text style={styles.workloadName}>{item.name}</Text><Text style={[styles.workloadValue, { color: visual.primary }]}>{item.total}</Text></View><View style={styles.workloadTrack}><View style={[styles.workloadFill, { width: `${Math.max(8, Math.round((item.total / maximumDepartmentWorkload) * 100))}%`, backgroundColor: visual.accent }]} /></View></View>)}</View> : <EmptyState title="Sin carga activa" description="No existen casos abiertos distribuidos entre los departamentos." />}
+        </View>}
+
+        {(role === 'maintenance' || role === 'employee') && priorityIncident && <Pressable style={[styles.priorityPanel, { borderColor: visual.accent }]} onPress={() => router.push('/reports')}>
+          <View style={[styles.priorityIcon, { backgroundColor: visual.primary }]}><Ionicons name={priorityIncident.priority === 'URGENTE' ? 'warning-outline' : 'navigate-outline'} size={23} color={colors.white} /></View>
+          <View style={styles.priorityBody}><Text style={[styles.sectionKicker, { color: visual.primary }]}>SIGUIENTE CASO PRIORITARIO</Text><Text style={styles.priorityTitle}>{priorityIncident.title}</Text><Text style={styles.priorityMeta}>{priorityIncident.code} · {priorityIncident.priority.charAt(0) + priorityIncident.priority.slice(1).toLowerCase()} · {priorityIncident.location}</Text></View>
+          <Ionicons name="arrow-forward" size={20} color={visual.primary} />
+        </Pressable>}
+
         <View style={styles.sectionHeader}><View><Text style={styles.sectionKicker}>TU ESPACIO</Text><Text style={styles.sectionTitle}>Accesos principales</Text></View><Text style={[styles.sectionMeta, { color: visual.primary }]}>{visual.label}</Text></View>
         <View style={styles.actionsGrid}>{content.actions.map((item) => (
           <Pressable key={item.title} style={[styles.actionCard, isWide && styles.actionCardWide]} onPress={() => router.push(item.route)}>
@@ -213,4 +236,5 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: spacing.md }, sectionKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginBottom: 3 }, sectionTitle: { color: colors.text, fontSize: 19, fontWeight: '800' }, sectionMeta: { fontSize: 12, fontWeight: '800' }, sectionLink: { fontSize: 13, fontWeight: '800' },
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, actionCard: { flexBasis: '100%', minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md }, actionCardWide: { flexBasis: 260, flexGrow: 1 }, actionIcon: { width: 46, height: 46, borderRadius: 15, alignItems: 'center', justifyContent: 'center' }, actionText: { flex: 1 }, actionTitle: { color: colors.text, fontSize: 15, fontWeight: '800' }, actionCopy: { color: colors.muted, fontSize: 13, marginTop: 3 }, actionArrow: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   activityPanel: { backgroundColor: 'rgba(255,255,255,0.58)', borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.md }, activityHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }, viewAll: { minHeight: 36, borderRadius: radius.pill, borderWidth: 1, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.xs }, incidentList: { gap: spacing.sm }
+  ,operationsPanel: { backgroundColor: colors.white, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.lg }, operationsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }, workloadList: { gap: spacing.md }, workloadRow: { gap: spacing.xs }, workloadMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }, workloadName: { color: colors.text, fontSize: 14, fontWeight: '800' }, workloadValue: { fontSize: 14, fontWeight: '900' }, workloadTrack: { height: 8, backgroundColor: colors.softGreen, borderRadius: radius.pill, overflow: 'hidden' }, workloadFill: { height: '100%', borderRadius: radius.pill }, priorityPanel: { minHeight: 96, backgroundColor: colors.white, borderRadius: radius.xl, borderWidth: 1, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md }, priorityIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, priorityBody: { flex: 1, gap: 3 }, priorityTitle: { color: colors.text, fontSize: 16, fontWeight: '800' }, priorityMeta: { color: colors.muted, fontSize: 12, lineHeight: 18 }
 });
