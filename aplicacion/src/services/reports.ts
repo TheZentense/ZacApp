@@ -329,9 +329,6 @@ export async function updateReportStatus(
   if (!supabase) throw new Error('Supabase no está configurado.');
   if (previousStatus === newStatus) throw new Error('Selecciona un estado diferente al actual.');
 
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  if (authError || !authData.user) throw new Error('La sesión ya no está disponible. Inicia sesión nuevamente.');
-
   let assignedDepartmentId: number | null = null;
   if (newStatus === 'ASIGNADO') {
     assignedDepartmentId = selectedDepartmentId ?? null;
@@ -350,31 +347,25 @@ export async function updateReportStatus(
     }
   }
 
-  const updateValues: { status: IncidentStatus; assigned_department_id?: number } = { status: newStatus };
-  if (assignedDepartmentId) updateValues.assigned_department_id = assignedDepartmentId;
-
-  const { data: updatedIncident, error: updateError } = await supabase
-    .from('incidents')
-    .update(updateValues)
-    .eq('id', incidentId)
-    .eq('status', previousStatus)
-    .select('updated_at')
-    .single();
-
-  if (updateError || !updatedIncident) {
-    throw new Error(updateError?.message ?? 'El reporte cambió desde otra sesión. Actualiza la lista e intenta nuevamente.');
-  }
-
-  const { error: historyError } = await supabase.from('incident_history').insert({
-    incident_id: incidentId,
-    changed_by: authData.user.id,
-    previous_status: previousStatus,
-    new_status: newStatus,
-    note: note.trim() || null
+  const { data: updatedAt, error } = await supabase.rpc('transition_incident', {
+    p_incident_id: incidentId,
+    p_previous_status: previousStatus,
+    p_new_status: newStatus,
+    p_note: note.trim() || null,
+    p_department_id: assignedDepartmentId
   });
 
+  if (error || !updatedAt) {
+    const message = error?.message.toLowerCase() ?? '';
+    if (message.includes('status changed')) throw new Error('El reporte cambió desde otra sesión. Actualiza la lista e intenta nuevamente.');
+    if (message.includes('note required')) throw new Error('Agrega una nota para justificar este cambio de estado.');
+    if (message.includes('transition not allowed')) throw new Error('Este cambio de estado no está permitido para tu rol.');
+    if (message.includes('access denied')) throw new Error('Este reporte no pertenece a tu departamento.');
+    throw new Error(error?.message ?? 'No fue posible actualizar el reporte.');
+  }
+
   return {
-    updatedAt: formatDate(updatedIncident.updated_at),
-    historyRecorded: !historyError
+    updatedAt: formatDate(String(updatedAt)),
+    historyRecorded: true
   };
 }

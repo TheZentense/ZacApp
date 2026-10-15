@@ -157,13 +157,17 @@ export default function ReportsScreen() {
 
   const changeStatus = async () => {
     if (!selected || !nextStatus || isUpdatingStatus) return;
+    if (['RECHAZADO', 'POR_VERIFICAR', 'CERRADO'].includes(nextStatus) && !statusNote.trim()) {
+      setStatusError('Agrega una nota para explicar este cambio de estado.');
+      return;
+    }
     setIsUpdatingStatus(true);
     setStatusMessage('');
     setStatusError('');
     try {
       const result = await updateReportStatus(selected.id, selected.status, nextStatus, statusNote, selected.category, managementDepartmentId);
       setSelected({ ...selected, status: nextStatus, updatedAt: result.updatedAt });
-      setStatusMessage(result.historyRecorded ? 'El estado y la trazabilidad se actualizaron correctamente.' : 'El estado se actualizó, pero el historial requiere revisión.');
+      setStatusMessage('El estado y la trazabilidad se actualizaron correctamente.');
       setNextStatus(null);
       setStatusNote('');
       await reload();
