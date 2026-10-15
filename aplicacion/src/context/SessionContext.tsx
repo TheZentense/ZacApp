@@ -8,6 +8,7 @@ type SessionContextValue = {
   role: UserRole;
   email: string;
   fullName: string;
+  phone: string;
   department: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -16,6 +17,7 @@ type SessionContextValue = {
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string, redirectTo: string) => Promise<void>;
   completePasswordRecovery: (newPassword: string) => Promise<void>;
+  updateProfile: (name: string, phone: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -25,6 +27,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('citizen');
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [department, setDepartment] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
@@ -56,6 +59,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!user) {
       applyEmailFallback(null);
       setFullName('');
+      setPhone('');
       return true;
     }
 
@@ -65,7 +69,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('full_name, role, status, department:departments(name)')
+      .select('full_name, phone, role, status, department:departments(name)')
       .eq('id', user.id)
       .single();
 
@@ -73,6 +77,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (data.status === 'INACTIVO') {
       applyEmailFallback(null);
       setFullName('');
+      setPhone('');
       setDepartment(null);
       return false;
     }
@@ -88,6 +93,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else setRole('citizen');
 
     setFullName(data.full_name || '');
+    setPhone(data.phone || '');
     setDepartment(departmentName ?? null);
     return true;
   }, [applyEmailFallback]);
@@ -114,6 +120,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       role,
       email,
       fullName,
+      phone,
       department,
       isAuthenticated,
       isLoading,
@@ -152,12 +159,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.updateUser({ password: newPassword });
         if (error) throw error;
       },
+      updateProfile: async (name: string, phoneValue: string) => {
+        if (!supabase) throw new Error('Supabase no está configurado.');
+        const normalizedName = name.trim();
+        const normalizedPhone = phoneValue.trim();
+        const { error } = await supabase.rpc('update_own_profile', {
+          p_full_name: normalizedName,
+          p_phone: normalizedPhone || null
+        });
+        if (error) throw error;
+        setFullName(normalizedName);
+        setPhone(normalizedPhone);
+      },
       signOut: async () => {
         if (supabase) await supabase.auth.signOut();
         await hydrateIdentity(null);
       }
     }),
-    [department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, role]
+    [department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, phone, role]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
