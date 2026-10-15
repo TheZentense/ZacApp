@@ -18,6 +18,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="report/new" options={{ title: 'Nuevo reporte', presentation: 'modal' }} />
           <Stack.Screen name="admin/users" options={{ title: 'Administración de usuarios' }} />
+          <Stack.Screen name="admin/catalogs" options={{ title: 'Categorías y departamentos' }} />
         </Stack>
       </ReportsProvider>
     </SessionProvider>
