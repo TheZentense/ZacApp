@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 
@@ -26,7 +26,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
 
-  const applyEmailFallback = (value?: string | null) => {
+  const applyEmailFallback = useCallback((value?: string | null) => {
     const normalizedEmail = value?.trim().toLowerCase() ?? '';
     setEmail(normalizedEmail);
     setIsAuthenticated(Boolean(normalizedEmail));
@@ -47,9 +47,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setRole('citizen');
       setDepartment(null);
     }
-  };
+  }, []);
 
-  const hydrateIdentity = async (user?: User | null) => {
+  const hydrateIdentity = useCallback(async (user?: User | null) => {
     if (!user) {
       applyEmailFallback(null);
       setFullName('');
@@ -80,7 +80,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     setFullName(data.full_name || '');
     setDepartment(departmentName ?? null);
-  };
+  }, [applyEmailFallback]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -95,7 +95,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
 
     return () => data.subscription.unsubscribe();
-  }, []);
+  }, [hydrateIdentity]);
 
   const value = useMemo(
     () => ({
@@ -126,7 +126,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await hydrateIdentity(null);
       }
     }),
-    [department, email, fullName, isAuthenticated, isLoading, role]
+    [department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, role]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

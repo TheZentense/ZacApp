@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -30,6 +30,7 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
 
 export default function NewReportScreen() {
   const { role } = useSession();
+  const mountedRef = useRef(true);
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
   const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
   const [categoriesLoading, setCategoriesLoading] = useState(isSupabaseConfigured);
@@ -41,24 +42,52 @@ export default function NewReportScreen() {
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
+  const applyCategories = (availableCategories: ReportCategory[]) => {
+    setCategories(availableCategories);
+    setCategory((current) => availableCategories.some((item) => item.name === current) ? current : availableCategories[0]?.name ?? '');
+  };
+
   const loadCategories = useCallback(async () => {
     if (!isSupabaseConfigured) return;
     setCategoriesLoading(true);
     setCategoriesError('');
     try {
       const availableCategories = await listReportCategories();
-      setCategories(availableCategories);
-      setCategory((current) => availableCategories.some((item) => item.name === current) ? current : availableCategories[0]?.name ?? '');
+      if (!mountedRef.current) return;
+      applyCategories(availableCategories);
     } catch (error) {
+      if (!mountedRef.current) return;
       setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
     } finally {
+      if (!mountedRef.current) return;
       setCategoriesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
+    mountedRef.current = true;
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    listReportCategories()
+      .then((availableCategories) => {
+        if (!active || !mountedRef.current) return;
+        applyCategories(availableCategories);
+      })
+      .catch((error) => {
+        if (!active || !mountedRef.current) return;
+        setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
+      })
+      .finally(() => {
+        if (!active || !mountedRef.current) return;
+        setCategoriesLoading(false);
+      });
+
+    return () => {
+      active = false;
+      mountedRef.current = false;
+    };
+  }, []);
 
   const openCamera = async () => {
     if (!cameraPermission?.granted) await requestCameraPermission();

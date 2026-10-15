@@ -6,15 +6,53 @@ import { EmptyState } from '@/components/EmptyState';
 import { ErrorState, LoadingState } from '@/components/DataState';
 import { useReports } from '@/hooks/useReports';
 import { colors, radius, spacing } from '@/theme/tokens';
-import type { Incident } from '@/types/domain';
+import { isIncidentPriority, type Incident, type IncidentStatus } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
 import { updateReportStatus } from '@/services/reports';
 import { AppButton } from '@/components/AppButton';
-import type { IncidentStatus } from '@/types/domain';
 
-type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
-const filters: { key: Filter; label: string }[] = [{ key: 'TODOS', label: 'Todos' }, { key: 'ACTIVOS', label: 'Activos' }, { key: 'CERRADOS', label: 'Resueltos' }];
+type OperationalFilter = 'TODOS' | 'PENDIENTES' | 'ASIGNADO' | 'EN_ATENCION' | 'POR_VERIFICAR' | 'CERRADO' | 'RECHAZADO';
+type Filter = OperationalFilter | 'ACTIVOS';
+type FilterOption = { key: Filter; label: string };
+
+const citizenFilters: FilterOption[] = [
+  { key: 'TODOS', label: 'Todos' },
+  { key: 'ACTIVOS', label: 'Activos' },
+  { key: 'CERRADO', label: 'Resueltos' }
+];
+
+const operationalFilters: FilterOption[] = [
+  { key: 'TODOS', label: 'Todos' },
+  { key: 'PENDIENTES', label: 'Pendientes' },
+  { key: 'ASIGNADO', label: 'Asignados' },
+  { key: 'EN_ATENCION', label: 'En atención' },
+  { key: 'POR_VERIFICAR', label: 'Por verificar' },
+  { key: 'CERRADO', label: 'Cerrados' },
+  { key: 'RECHAZADO', label: 'Rechazados' }
+];
+
+const operationalFilterByStatus: Record<IncidentStatus, Exclude<OperationalFilter, 'TODOS'>> = {
+  REGISTRADO: 'PENDIENTES',
+  EN_REVISION: 'PENDIENTES',
+  VALIDADO: 'PENDIENTES',
+  ASIGNADO: 'ASIGNADO',
+  EN_ATENCION: 'EN_ATENCION',
+  POR_VERIFICAR: 'POR_VERIFICAR',
+  CERRADO: 'CERRADO',
+  RECHAZADO: 'RECHAZADO'
+};
+
+function matchesFilter(status: IncidentStatus, filter: Filter) {
+  if (filter === 'TODOS') return true;
+  if (filter === 'ACTIVOS') return status !== 'CERRADO';
+  return operationalFilterByStatus[status] === filter;
+}
+
+function formatPriority(value: unknown): string {
+  if (value === undefined) return 'no consultada';
+  return isIncidentPriority(value) ? String(value) : 'no disponible';
+}
 
 const statusLabels: Record<IncidentStatus, string> = {
   REGISTRADO: 'Registrado',
@@ -47,16 +85,15 @@ export default function ReportsScreen() {
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [filter, setFilter] = useState<Filter>('TODOS');
+  const filters = role === 'citizen' ? citizenFilters : operationalFilters;
+  const selectedFilter = filters.find((item) => item.key === filter) ?? filters[0];
   const [selected, setSelected] = useState<Incident | null>(null);
   const [nextStatus, setNextStatus] = useState<IncidentStatus | null>(null);
   const [statusNote, setStatusNote] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [statusError, setStatusError] = useState('');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const incidents = useMemo(() => availableIncidents.filter((item) => {
-    const matchesStatus = filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO');
-    return matchesStatus;
-  }), [availableIncidents, filter]);
+  const incidents = useMemo(() => availableIncidents.filter((item) => matchesFilter(item.status, selectedFilter.key)), [availableIncidents, selectedFilter.key]);
   const heading = role === 'superadmin' ? 'Reportes generales' : role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : role === 'employee' ? `Reportes del área · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
   const availableTransitions = selected
@@ -105,6 +142,7 @@ export default function ReportsScreen() {
         <DetailRow label="Última actualización" value={selected.updatedAt} />
         <DetailRow label="Categoría" value={selected.category} />
         <DetailRow label="Ubicación" value={selected.location} />
+        <DetailRow label="Prioridad:" value={formatPriority(selected.priority)} />
       </View>
       {role !== 'citizen' && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
@@ -120,9 +158,9 @@ export default function ReportsScreen() {
         </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
       </View>}
     </> : <>
-      <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
+      <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} accessibilityRole="button" accessibilityState={{ selected: selectedFilter.key === item.key }} onPress={() => setFilter(item.key)} style={[styles.filter, selectedFilter.key === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, selectedFilter.key === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
       {!isLoading && !error && <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>}
-      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title="No hay reportes en este filtro" description="Prueba con otro estado o registra un nuevo caso para consultarlo aquí." />}
+      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title={selectedFilter.key === 'TODOS' ? 'No hay reportes disponibles' : `No hay reportes en «${selectedFilter.label}»`} description={selectedFilter.key === 'TODOS' ? 'No hay reportes disponibles para tu acceso.' : 'Selecciona otro filtro para consultar los reportes disponibles.'} />}
     </>}
   </ScrollView>;
 }

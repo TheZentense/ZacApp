@@ -35,7 +35,7 @@ const completedByStatus: Record<Incident['status'], number> = {
 };
 
 export default function TrackingScreen() {
-  const { role, department } = useSession();
+  const { role } = useSession();
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [category, setCategory] = useState('Todas');
@@ -51,15 +51,9 @@ export default function TrackingScreen() {
   const progress = Math.round((completedSteps / steps.length) * 100);
 
   useEffect(() => {
-    if (!selected) {
-      setHistory([]);
-      setHistoryError('');
-      return;
-    }
+    if (!selected) return;
 
     let active = true;
-    setHistoryLoading(true);
-    setHistoryError('');
     listReportHistory(selected.id)
       .then((entries) => { if (active) setHistory(entries); })
       .catch((historyLoadError) => { if (active) setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'No fue posible consultar el historial.'); })
@@ -67,13 +61,27 @@ export default function TrackingScreen() {
     return () => { active = false; };
   }, [selected]);
 
+  const selectIncident = (incident: Incident) => {
+    setHistory([]);
+    setHistoryError('');
+    setHistoryLoading(true);
+    setSelected(incident);
+  };
+
+  const clearSelectedIncident = () => {
+    setSelected(null);
+    setHistory([]);
+    setHistoryError('');
+    setHistoryLoading(false);
+  };
+
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
     <View style={[styles.header, { backgroundColor: visual.primary }]}>
       <View style={styles.headerMark}><View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="pulse-outline" size={25} color={visual.primary} /></View><Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · TRAZABILIDAD</Text></View>
       <Text style={styles.title}>{heading}</Text><Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : 'Selecciona una categoría y abre el reporte que deseas consultar.'}</Text>
     </View>
     {selected ? <>
-      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Elegir otro reporte</Text></Pressable>
+      <Pressable style={styles.backButton} onPress={clearSelectedIncident}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Elegir otro reporte</Text></Pressable>
       <View style={[styles.caseCard, { backgroundColor: visual.primary }]}>
         <View style={styles.caseMain}><Text style={[styles.code, { color: visual.accent }]}>{selected.code}</Text><Text style={styles.caseTitle}>{selected.title}</Text><Text style={styles.meta}>{selected.category} · {selected.location}</Text></View>
         <View style={styles.progressBadge}><Text style={[styles.progressValue, { color: visual.accent }]}>{progress}%</Text><Text style={styles.progressLabel}>del proceso</Text></View>
@@ -92,7 +100,7 @@ export default function TrackingScreen() {
       </View>
     </> : <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
-      {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => setSelected(item)} />)}</View> : <EmptyState title="Sin reportes disponibles" description="No hay casos para la categoría seleccionada." />}
+      {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectIncident(item)} />)}</View> : <EmptyState title="Sin reportes disponibles" description="No hay casos para la categoría seleccionada." />}
     </>}
   </ScrollView>;
 }
