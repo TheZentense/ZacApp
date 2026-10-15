@@ -17,6 +17,7 @@ export default function RootLayout() {
           <Stack.Screen name="reset-password" options={{ title: 'Nueva contraseña' }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="report/new" options={{ title: 'Nuevo reporte', presentation: 'modal' }} />
+          <Stack.Screen name="admin/users" options={{ title: 'Administración de usuarios' }} />
         </Stack>
       </ReportsProvider>
     </SessionProvider>

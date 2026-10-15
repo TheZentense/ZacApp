@@ -10,6 +10,7 @@ const functions = [
   { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
   { title: 'Asignaciones', copy: 'Distribuir reportes entre áreas y responsables', icon: 'git-branch-outline', route: '/reports' },
   { title: 'Panel operativo', copy: 'Consultar indicadores y carga departamental', icon: 'bar-chart-outline', route: '/' },
+  { title: 'Usuarios y accesos', copy: 'Gestionar personal, estado y departamento', icon: 'people-outline', route: '/admin/users' },
   { title: 'Mi perfil', copy: 'Consultar la sesión administrativa', icon: 'person-outline', route: '/profile' }
 ] as const;
 
