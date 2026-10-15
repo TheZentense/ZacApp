@@ -56,20 +56,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!user) {
       applyEmailFallback(null);
       setFullName('');
-      return;
+      return true;
     }
 
     applyEmailFallback(user.email);
     setFullName(typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '');
-    if (!supabase) return;
+    if (!supabase) return true;
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('full_name, role, department:departments(name)')
+      .select('full_name, role, status, department:departments(name)')
       .eq('id', user.id)
       .single();
 
-    if (error || !data) return;
+    if (error || !data) return true;
+    if (data.status === 'INACTIVO') {
+      applyEmailFallback(null);
+      setFullName('');
+      setDepartment(null);
+      return false;
+    }
     const databaseRole = data.role as string;
     const departmentData = data.department as unknown as { name?: string } | { name?: string }[] | null;
     const departmentName = Array.isArray(departmentData) ? departmentData[0]?.name : departmentData?.name;
@@ -83,17 +89,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     setFullName(data.full_name || '');
     setDepartment(departmentName ?? null);
+    return true;
   }, [applyEmailFallback]);
 
   useEffect(() => {
-    if (!supabase) return;
+    const client = supabase;
+    if (!client) return;
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      await hydrateIdentity(data.session?.user);
+    client.auth.getSession().then(async ({ data }) => {
+      const isActive = await hydrateIdentity(data.session?.user);
+      if (!isActive) await client.auth.signOut({ scope: 'local' });
       setIsLoading(false);
     });
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = client.auth.onAuthStateChange((_event, session) => {
       hydrateIdentity(session?.user).finally(() => setIsLoading(false));
     });
 
@@ -112,7 +121,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         const { data, error } = await supabase.auth.signInWithPassword({ email: value.trim().toLowerCase(), password });
         if (error) throw error;
-        await hydrateIdentity(data.user);
+        const isActive = await hydrateIdentity(data.user);
+        if (!isActive) {
+          await supabase.auth.signOut({ scope: 'local' });
+          throw new Error('account inactive');
+        }
       },
       signUp: async (name: string, value: string, password: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');

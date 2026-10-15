@@ -36,6 +36,7 @@ export default function LoginScreen() {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
       if (message.includes('invalid login credentials')) setErrorMessage('El correo o la contraseña no son correctos.');
       else if (message.includes('email not confirmed')) setErrorMessage('Confirma tu correo electrónico antes de ingresar.');
+      else if (message.includes('account inactive')) setErrorMessage('Esta cuenta se encuentra inactiva. Contacta al administrador del sistema.');
       else if (message.includes('failed to fetch') || message.includes('network')) setErrorMessage('No fue posible conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.');
       else setErrorMessage('No fue posible iniciar sesión. Inténtalo nuevamente.');
     } finally {
