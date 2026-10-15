@@ -13,6 +13,9 @@ type SessionContextValue = {
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<boolean>;
+  updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  requestPasswordReset: (email: string, redirectTo: string) => Promise<void>;
+  completePasswordRecovery: (newPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -120,6 +123,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         });
         if (error) throw error;
         return Boolean(data.session);
+      },
+      updatePassword: async (currentPassword: string, newPassword: string) => {
+        if (!supabase) throw new Error('Supabase no está configurado.');
+        const { error } = await supabase.auth.updateUser({ password: newPassword, current_password: currentPassword });
+        if (error) throw error;
+      },
+      requestPasswordReset: async (value: string, redirectTo: string) => {
+        if (!supabase) throw new Error('Supabase no está configurado.');
+        const { error } = await supabase.auth.resetPasswordForEmail(value.trim().toLowerCase(), { redirectTo });
+        if (error) throw error;
+      },
+      completePasswordRecovery: async (newPassword: string) => {
+        if (!supabase) throw new Error('Supabase no está configurado.');
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw error;
       },
       signOut: async () => {
         if (supabase) await supabase.auth.signOut();

@@ -90,6 +90,7 @@ export default function LoginScreen() {
               icon="log-in-outline"
               onPress={submit}
             />
+            <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>
             <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
             <View style={styles.secureNote}><Ionicons name="shield-checkmark-outline" size={17} color={colors.secondary} /><Text style={styles.secureNoteText}>Acceso protegido mediante Supabase Auth.</Text></View>
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
@@ -137,5 +138,7 @@ const styles = StyleSheet.create({
   secureNoteText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   helpText: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: spacing.xs },
   errorBox: { backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: '#F2B8B5', borderRadius: radius.md, padding: spacing.md, marginVertical: spacing.xs },
-  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' }
+  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' },
+  forgotButton: { alignSelf: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' }
 });

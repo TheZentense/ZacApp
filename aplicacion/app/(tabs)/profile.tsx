@@ -1,4 +1,5 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { router } from 'expo-router';
@@ -15,10 +16,35 @@ const profileContent = {
 } as const;
 
 export default function ProfileScreen() {
-  const { role, email, fullName, department, signOut } = useSession();
+  const { role, email, fullName, department, signOut, updatePassword } = useSession();
   const content = profileContent[role];
   const visual = roleVisuals[role];
   const isCitizen = role === 'citizen';
+  const [showSecurityForm, setShowSecurityForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  const submitPassword = async () => {
+    setPasswordError(''); setPasswordMessage('');
+    if (!currentPassword || !newPassword || !confirmPassword) return setPasswordError('Completa los tres campos de contraseña.');
+    if (newPassword.length < 8) return setPasswordError('La contraseña nueva debe tener al menos 8 caracteres.');
+    if (newPassword !== confirmPassword) return setPasswordError('La confirmación no coincide con la contraseña nueva.');
+    if (currentPassword === newPassword) return setPasswordError('La contraseña nueva debe ser diferente de la actual.');
+    try {
+      setIsUpdatingPassword(true);
+      await updatePassword(currentPassword, newPassword);
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      setPasswordMessage('La contraseña se actualizó correctamente.');
+      setShowSecurityForm(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      setPasswordError(message.includes('password') ? 'La contraseña actual no es correcta o la nueva no cumple los requisitos.' : 'No fue posible actualizar la contraseña.');
+    } finally { setIsUpdatingPassword(false); }
+  };
 
   return (
     <ScrollView style={[styles.page, { backgroundColor: visual.background }]} contentContainerStyle={styles.pageContent}>
@@ -41,7 +67,16 @@ export default function ProfileScreen() {
           <InfoRow icon="key-outline" label="Rol actual" value={content.role} />
         </View>
 
-        <View style={styles.securityCard}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Sesión protegida</Text><Text style={styles.securityCopy}>Tu acceso está conectado a la autenticación segura de ZacApp.</Text></View></View>
+        <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>Cambia tu contraseña verificando primero la actual.</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {showSecurityForm && <View style={styles.passwordCard}>
+          <Text style={styles.passwordTitle}>Cambiar contraseña</Text>
+          <Text style={styles.label}>Contraseña actual</Text><TextInput value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Contraseña actual" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          <Text style={styles.label}>Contraseña nueva</Text><TextInput value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="Mínimo 8 caracteres" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          <Text style={styles.label}>Confirmar contraseña nueva</Text><TextInput value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Repite la contraseña nueva" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          {passwordError ? <View style={styles.errorBox}><Text style={styles.errorText}>{passwordError}</Text></View> : null}
+          <AppButton label={isUpdatingPassword ? 'Actualizando...' : 'Actualizar contraseña'} icon="key-outline" disabled={isUpdatingPassword} onPress={submitPassword} />
+        </View>}
+        {passwordMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{passwordMessage}</Text></View> : null}
         <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={async () => { await signOut(); router.replace('/login'); }} />
       </View>
     </ScrollView>
@@ -83,5 +118,12 @@ const styles = StyleSheet.create({
   securityIcon: { width: 46, height: 46, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   securityText: { flex: 1 },
   securityTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  securityCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 }
+  securityCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  passwordCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.sm },
+  passwordTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: spacing.xs },
+  input: { minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, backgroundColor: colors.surface, color: colors.text, fontSize: 15 },
+  errorBox: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md },
+  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  successBox: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  successText: { flex: 1, color: colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' }
 });
