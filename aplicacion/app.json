@@ -31,6 +31,14 @@
           "recordAudioAndroid": false,
           "barcodeScannerEnabled": false
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permitir que ZacApp seleccione fotografías para adjuntar evidencia a los reportes.",
+          "cameraPermission": "Permitir que ZacApp acceda a la cámara para adjuntar evidencia a los reportes.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

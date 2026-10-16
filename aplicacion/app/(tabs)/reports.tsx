@@ -46,7 +46,7 @@ const maintenanceTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> 
 };
 
 export default function ReportsScreen() {
-  const { role, department } = useSession();
+  const { role, databaseRole, department } = useSession();
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [filter, setFilter] = useState<Filter>('TODOS');
@@ -71,20 +71,21 @@ export default function ReportsScreen() {
   const [evidenceMessage, setEvidenceMessage] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
-  const canManageAssignment = role === 'admin' || role === 'superadmin';
-  const departmentOptions = useMemo(() => Array.from(new Set(availableIncidents.map((item) => item.department))).sort(), [availableIncidents]);
-  const incidents = useMemo(() => availableIncidents.filter((item) => {
+  const canManageAssignment = databaseRole === 'administrador';
+  const readableIncidents = useMemo(() => databaseRole === 'operador' ? [] : availableIncidents, [availableIncidents, databaseRole]);
+  const departmentOptions = useMemo(() => Array.from(new Set(readableIncidents.map((item) => item.department))).sort(), [readableIncidents]);
+  const incidents = useMemo(() => readableIncidents.filter((item) => {
     const matchesStatus = filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO');
     const normalizedSearch = search.trim().toLocaleLowerCase('es');
     const matchesSearch = !normalizedSearch || [item.code, item.title, item.category, item.location].some((value) => value.toLocaleLowerCase('es').includes(normalizedSearch));
     const matchesPriority = priorityFilter === 'TODAS' || item.priority === priorityFilter;
     const matchesDepartment = departmentFilter === 'TODOS' || item.department === departmentFilter;
     return matchesStatus && matchesSearch && matchesPriority && matchesDepartment;
-  }), [availableIncidents, departmentFilter, filter, priorityFilter, search]);
-  const heading = role === 'superadmin' ? 'Reportes generales' : role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : role === 'employee' ? `Reportes del área · ${department}` : 'Mis reportes';
+  }), [readableIncidents, departmentFilter, filter, priorityFilter, search]);
+  const heading = databaseRole === 'administrador' ? 'Reportes generales' : databaseRole === 'mantenimiento' ? `Asignaciones · ${department}` : databaseRole === 'operador' ? `Tareas asignadas · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
   const availableTransitions = selected
-    ? (role === 'maintenance' ? maintenanceTransitions[selected.status] : role === 'citizen' ? [] : administrativeTransitions[selected.status]) ?? []
+    ? (databaseRole === 'mantenimiento' ? maintenanceTransitions[selected.status] : databaseRole === 'administrador' ? administrativeTransitions[selected.status] : []) ?? []
     : [];
 
   useEffect(() => {
@@ -207,7 +208,7 @@ export default function ReportsScreen() {
         {managementMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{managementMessage}</Text></View> : null}
         <AppButton disabled={!managementDepartmentId || isSavingManagement} label={isSavingManagement ? 'Guardando...' : 'Guardar asignación'} icon="save-outline" onPress={saveManagement} />
       </View>}
-      {role !== 'citizen' && <View style={styles.managementCard}>
+      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
         {availableTransitions.length ? <>
           <Text style={styles.fieldLabel}>Siguiente estado</Text>
@@ -220,7 +221,7 @@ export default function ReportsScreen() {
           <AppButton disabled={!nextStatus || isUpdatingStatus || (nextStatus === 'ASIGNADO' && canManageAssignment && !managementDepartmentId)} label={isUpdatingStatus ? 'Actualizando...' : 'Confirmar cambio'} icon="checkmark-circle-outline" onPress={changeStatus} />
         </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
       </View>}
-      {role !== 'citizen' && <View style={styles.managementCard}>
+      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="camera-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Evidencia de atención</Text><Text style={styles.managementCopy}>Adjunta una fotografía del avance o del trabajo realizado. Se optimizará antes de subirla.</Text></View></View>
         {workEvidence ? <View style={styles.evidenceReady}><Ionicons name="image-outline" size={23} color={visual.primary} /><View style={styles.managementTitleBlock}><Text style={styles.evidenceReadyTitle}>Fotografía preparada</Text><Text style={styles.helperText}>Lista para asociarse al reporte {selected.code}.</Text></View><Pressable onPress={() => setWorkEvidence(null)}><Ionicons name="close-circle" size={22} color={colors.muted} /></Pressable></View> : null}
         <View style={styles.evidenceActions}><AppButton label={workEvidence ? 'Cambiar fotografía' : 'Seleccionar fotografía'} icon="images-outline" disabled={isUploadingEvidence} onPress={selectWorkEvidence} /><AppButton label={isUploadingEvidence ? 'Subiendo...' : 'Adjuntar evidencia'} icon="cloud-upload-outline" disabled={!workEvidence || isUploadingEvidence} onPress={submitWorkEvidence} /></View>
@@ -235,7 +236,7 @@ export default function ReportsScreen() {
         {canManageAssignment && departmentOptions.length > 1 && <View style={styles.filterGroup}><Text style={styles.filterLabel}>Departamento</Text><View style={styles.filters}><Pressable onPress={() => setDepartmentFilter('TODOS')} style={[styles.filter, departmentFilter === 'TODOS' && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, departmentFilter === 'TODOS' && styles.filterTextActive]}>Todos</Text></Pressable>{departmentOptions.map((item) => <Pressable key={item} onPress={() => setDepartmentFilter(item)} style={[styles.filter, departmentFilter === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, departmentFilter === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</View></View>}
       </View>
       {!isLoading && !error && <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>}
-      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title="No hay reportes con estos criterios" description="Cambia la búsqueda o alguno de los filtros para consultar otros casos." />}
+      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <View style={styles.list}><EmptyState title="Sin coincidencias" description="Cambia la búsqueda o alguno de los filtros para consultar otros casos." /><AppButton label="Limpiar filtros" variant="secondary" onPress={() => { setSearch(''); setFilter('TODOS'); setPriorityFilter('TODAS'); setDepartmentFilter('TODOS'); }} /></View>}
     </>}
   </ScrollView>;
 }

@@ -1,12 +1,14 @@
-import { router, Tabs } from 'expo-router';
+import { Redirect, router, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs';
 import type { ComponentProps } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession, UserRole } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { LoadingState } from '@/components/DataState';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -27,8 +29,8 @@ const adminNavigation = [
 ] satisfies { name: string; title: string; icon: IconName }[];
 
 const maintenanceNavigation = [
-  { name: 'index', title: 'Panel de trabajo', icon: 'construct-outline' },
-  { name: 'reports', title: 'Asignaciones', icon: 'clipboard-outline' },
+  { name: 'index', title: 'Panel departamental', icon: 'construct-outline' },
+  { name: 'reports', title: 'Reportes del departamento', icon: 'clipboard-outline' },
   { name: 'tracking', title: 'Seguimiento', icon: 'trail-sign-outline' },
   { name: 'admin-menu', title: 'Funciones', icon: 'apps-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
@@ -36,15 +38,15 @@ const maintenanceNavigation = [
 
 const employeeNavigation = [
   { name: 'index', title: 'Bandeja', icon: 'grid-outline' },
-  { name: 'reports', title: 'Reportes del área', icon: 'file-tray-full-outline' },
-  { name: 'tracking', title: 'Procesos', icon: 'git-branch-outline' },
+  { name: 'reports', title: 'Mis tareas', icon: 'file-tray-full-outline' },
+  { name: 'tracking', title: 'Seguimiento personal', icon: 'git-branch-outline' },
   { name: 'admin-menu', title: 'Funciones', icon: 'apps-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
 function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
   const [expanded, setExpanded] = useState(true);
-  const { signOut } = useSession();
+  const { signOut, department } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
@@ -73,7 +75,7 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
         {expanded && (
           <View style={styles.brandText}>
             <Text style={[styles.brandTitle, isStaff && styles.adminText]}>ZacApp</Text>
-            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{isMaintenance || isEmployee ? `${visual.label} · Agua potable` : visual.label}</Text>
+            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{(isMaintenance || isEmployee) && department ? `${visual.label} · ${department}` : visual.label}</Text>
           </View>
         )}
       </View>
@@ -119,16 +121,21 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
 }
 
 export default function TabsLayout() {
-  const { role } = useSession();
+  const { role, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
   const isStaff = role !== 'citizen';
-  const isWeb = Platform.OS === 'web';
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === 'web' && width >= 900;
   const visual = roleVisuals[role];
   const navigationBackground = isStaff ? visual.primary : colors.white;
   const navigationAccent = isStaff ? visual.accent : colors.primary;
   const navigationMuted = isStaff ? '#B9C5D5' : colors.muted;
+
+  if (isLoading) return <LoadingState label="Verificando sesión..." />;
+  if (isPasswordRecovery) return <Redirect href="/reset-password" />;
+  if (isSupabaseConfigured && !isAuthenticated) return <Redirect href="/login" />;
 
   return (
     <Tabs
@@ -154,17 +161,17 @@ export default function TabsLayout() {
           : {
               borderTopColor: isStaff ? '#2B4360' : colors.border,
               backgroundColor: navigationBackground,
-              height: 68,
+              height: 86,
               paddingBottom: 7,
               paddingTop: 4
             },
         tabBarItemStyle: isWeb ? { minHeight: 54, maxHeight: 54, borderRadius: 12, marginVertical: 4 } : undefined,
-        tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : undefined
+        tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : { fontSize: 11, fontWeight: '700' }
       }}
     >
-      <Tabs.Screen name="reports" options={{ title: isAdmin ? 'Reportes' : isMaintenance ? 'Asignaciones' : isEmployee ? 'Reportes del área' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ title: isEmployee ? 'Procesos' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Trabajo' : isEmployee ? 'Bandeja' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
+      <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIconStyle: !isWeb ? styles.centerTabIconSlot : undefined, tabBarLabelStyle: !isWeb ? styles.centerTabLabel : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
       <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={color} size={size} /> }} />
       <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={color} size={size} /> }} />
       <Tabs.Screen name="profile" options={{ title: 'Perfil', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
@@ -203,6 +210,8 @@ const styles = StyleSheet.create({
   logoutButton: { minHeight: 48, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.dangerSoft },
   adminLogoutButton: { backgroundColor: '#203753' },
   logoutText: { color: colors.danger, fontSize: 14, fontWeight: '800' },
-  centerTabItem: { marginTop: -9 },
+  centerTabItem: { marginTop: 0 },
+  centerTabIconSlot: { width: 48, height: 48 },
+  centerTabLabel: { fontSize: 11, lineHeight: 14, fontWeight: '700', marginTop: 2 },
   centerTabIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary, borderWidth: 4, borderColor: colors.white, elevation: 5 },
 });

@@ -1,6 +1,10 @@
 export type UserRole = 'visitante' | 'ciudadano' | 'operador' | 'coordinador' | 'mantenimiento' | 'supervisor' | 'administrador' | 'comunicacion';
 export type IncidentStatus = 'REGISTRADO' | 'EN_REVISION' | 'VALIDADO' | 'ASIGNADO' | 'EN_ATENCION' | 'POR_VERIFICAR' | 'CERRADO' | 'RECHAZADO';
 export type IncidentPriority = 'BAJA' | 'MEDIA' | 'ALTA' | 'URGENTE';
+
+export function isIncidentPriority(value: unknown): value is IncidentPriority {
+  return typeof value === 'string' && ['BAJA', 'MEDIA', 'ALTA', 'URGENTE'].includes(value);
+}
 export type MaintenanceDepartment = 'Agua' | 'EEMZA' | 'Drenajes' | 'Desechos' | 'Infraestructura';
 
 export type DemoUserStatus = 'Activo' | 'Inactivo';

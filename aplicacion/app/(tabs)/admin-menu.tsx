@@ -24,22 +24,20 @@ const maintenanceFunctions = [
 ] as const;
 
 const employeeFunctions = [
-  { title: 'Bandeja departamental', copy: 'Revisar reportes recibidos', icon: 'file-tray-full-outline', route: '/reports' },
-  { title: 'Validar reportes', copy: 'Confirmar información y categoría', icon: 'checkmark-done-outline', route: '/reports' },
-  { title: 'Canalizar', copy: 'Enviar casos al equipo responsable', icon: 'git-branch-outline', route: '/reports' },
-  { title: 'Historial del área', copy: 'Consultar movimientos del departamento', icon: 'time-outline', route: '/tracking' },
+  { title: 'Tareas asignadas', copy: 'Consultar únicamente el trabajo autorizado', icon: 'file-tray-full-outline', route: '/reports' },
+  { title: 'Mi seguimiento', copy: 'Consultar movimientos de las tareas visibles', icon: 'time-outline', route: '/tracking' },
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 export default function AdminMenuScreen() {
   const { width } = useWindowDimensions();
-  const { role } = useSession();
+  const { role, databaseRole } = useSession();
   const visual = roleVisuals[role];
-  const visibleFunctions = role === 'maintenance' ? maintenanceFunctions : role === 'employee' ? employeeFunctions : functions;
-  const title = role === 'maintenance' ? 'Herramientas de campo' : role === 'employee' ? 'Funciones del departamento' : 'Funciones administrativas';
+  const visibleFunctions = databaseRole === 'administrador' ? functions : databaseRole === 'mantenimiento' ? maintenanceFunctions : employeeFunctions;
+  const title = databaseRole === 'administrador' ? 'Funciones administrativas' : databaseRole === 'mantenimiento' ? 'Herramientas de campo' : 'Funciones del departamento';
   const isWide = width >= 780;
 
-  if (role === 'citizen') return <Redirect href="/services" />;
+  if (databaseRole === 'ciudadano' || !databaseRole) return <Redirect href="/services" />;
 
   const openFunction = (item: (typeof visibleFunctions)[number]) => {
     router.push(item.route);

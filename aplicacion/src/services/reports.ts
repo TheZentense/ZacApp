@@ -1,5 +1,8 @@
 import { supabase } from '@/lib/supabase';
-import type { Incident, IncidentPriority, IncidentStatus, MaintenanceDepartment } from '@/types/domain';
+import { isIncidentPriority, type Incident, type IncidentPriority, type IncidentStatus, type MaintenanceDepartment } from '@/types/domain';
+import { readEvidenceBytes } from '@/services/evidenceImages';
+import { requireBackendCapability } from '@/lib/backendCapabilities';
+import { personalTasksPendingMessage, reportReadScopeFor } from '@/services/sessionPolicy';
 
 type CreateReportInput = {
   categoryName: string;
@@ -11,6 +14,8 @@ export type ReportEvidenceInput = {
   uri: string;
   mimeType: string;
 };
+
+export class EvidenceLinkError extends Error {}
 
 export type ReportCategory = {
   id: number;
@@ -87,9 +92,16 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error('Inicia sesión para adjuntar una fotografía.');
 
-  const response = await fetch(evidence.uri);
-  if (!response.ok) throw new Error('No fue posible preparar la fotografía.');
-  const fileData = await response.arrayBuffer();
+  const { data: incident, error: incidentError } = await supabase
+    .from('incidents')
+    .select('id, citizen_id')
+    .eq('id', incidentId)
+    .single();
+  if (incidentError || !incident) throw new Error('El reporte no está disponible para esta sesión.');
+  if (incident.citizen_id !== authData.user.id) requireBackendCapability('staffEvidence');
+
+  if (evidence.mimeType !== 'image/jpeg') throw new Error('Selecciona una fotografía JPEG.');
+  const fileData = await readEvidenceBytes(evidence.uri);
   const storagePath = `${authData.user.id}/${incidentId}/${Date.now()}.jpg`;
 
   const { error: uploadError } = await supabase.storage
@@ -106,14 +118,11 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
     incident_id: incidentId,
     uploaded_by: authData.user.id,
     storage_path: storagePath,
-    file_url: storagePath,
-    mime_type: evidence.mimeType,
-    file_type: evidence.mimeType
+    mime_type: evidence.mimeType
   });
 
   if (evidenceError) {
-    await supabase.storage.from('incidente-evidencia').remove([storagePath]);
-    throw evidenceError;
+    throw new EvidenceLinkError('La fotografía se subió, pero no pudo vincularse al reporte. Conserva el reporte y solicita una revisión antes de reintentar.');
   }
 
   return storagePath;
@@ -128,7 +137,7 @@ type IncidentRow = {
   status: IncidentStatus;
   created_at: string;
   updated_at: string;
-  priority: IncidentPriority | null;
+  priority: unknown;
   assigned_department_id: number | null;
   assigned_to: string | null;
   category: { name?: string } | { name?: string }[] | null;
@@ -180,13 +189,39 @@ function progressForStatus(status: IncidentStatus) {
   return progress[status];
 }
 
-export async function listReports(): Promise<Incident[]> {
+async function requireReportReadAccess() {
   if (!supabase) throw new Error('Supabase no está configurado.');
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) throw new Error('Inicia sesión para consultar reportes.');
+  const { data: profile, error } = await supabase.from('profiles').select('role, department_id').eq('id', auth.user.id).single();
+  if (error || !profile) throw new Error('No fue posible verificar tu perfil.');
+  const scope = reportReadScopeFor(profile.role);
+  if (scope === 'pending') throw new Error(personalTasksPendingMessage);
+  const departmentId = profile.department_id;
+  if (scope === 'department' && (typeof departmentId !== 'number' || !Number.isSafeInteger(departmentId) || departmentId <= 0)) {
+    throw new Error('Tu perfil no tiene un departamento verificado.');
+  }
+  return { client: supabase, scope, userId: auth.user.id, departmentId: departmentId as number | null };
+}
 
-  const { data, error } = await supabase
+async function requireVisibleReport(incidentId: string) {
+  const { client, scope, userId, departmentId } = await requireReportReadAccess();
+  let query = client.from('incidents').select('id').eq('id', incidentId);
+  if (scope === 'citizen') query = query.eq('citizen_id', userId);
+  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  const { data, error } = await query.single();
+  if (error || !data) throw new Error('El reporte no está disponible para esta sesión.');
+  return client;
+}
+
+export async function listReports(): Promise<Incident[]> {
+  const { client, scope, userId, departmentId } = await requireReportReadAccess();
+  let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)')
-    .order('created_at', { ascending: false });
+    .select('id, code, title, description, address_reference, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)');
+  if (scope === 'citizen') query = query.eq('citizen_id', userId);
+  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) throw error;
 
@@ -207,7 +242,7 @@ export async function listReports(): Promise<Incident[]> {
       department: departmentForCategory(category),
       departmentId: incident.assigned_department_id,
       assignedToId: incident.assigned_to,
-      priority: incident.priority ?? 'MEDIA',
+      priority: isIncidentPriority(incident.priority) ? incident.priority : 'MEDIA',
       progress: progressForStatus(incident.status),
       evidenceAttached: Boolean(incident.evidence?.length)
     };
@@ -256,9 +291,9 @@ export async function updateReportManagement(input: {
 }
 
 export async function listReportHistory(incidentId: string): Promise<ReportHistoryEntry[]> {
-  if (!supabase) throw new Error('Supabase no está configurado.');
+  const client = await requireVisibleReport(incidentId);
 
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from('incident_history')
     .select('id, previous_status, new_status, note, created_at, actor:profiles!incident_history_changed_by_fkey(full_name)')
     .eq('incident_id', incidentId)
@@ -281,33 +316,31 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
 }
 
 export async function listReportEvidence(incidentId: string): Promise<ReportEvidence[]> {
-  if (!supabase) throw new Error('Supabase no está configurado.');
-  const client = supabase;
+  const client = await requireVisibleReport(incidentId);
 
   const { data, error } = await client
     .from('incident_evidence')
-    .select('id, file_url, file_type, created_at')
+    .select('id, storage_path, mime_type, uploaded_by, created_at')
     .eq('incident_id', incidentId)
     .order('created_at', { ascending: true });
 
   if (error) throw error;
 
   return Promise.all((data ?? []).map(async (item) => {
-    const storedValue = item.file_url as string;
-    let url = storedValue;
-
-    if (!/^https?:\/\//i.test(storedValue)) {
-      const { data: signedData, error: signedError } = await client.storage
-        .from('incidente-evidencia')
-        .createSignedUrl(storedValue, 15 * 60);
-      if (signedError || !signedData?.signedUrl) throw signedError ?? new Error('No fue posible abrir la evidencia.');
-      url = signedData.signedUrl;
+    const storedValue = item.storage_path as string;
+    const parts = typeof storedValue === 'string' ? storedValue.split('/') : [];
+    if (parts.length !== 3 || parts[0] !== item.uploaded_by || parts[1] !== incidentId || !parts[2] || parts.some((part) => part === '.' || part === '..')) {
+      throw new Error('La ruta de evidencia necesita revisión.');
     }
+    const { data: signedData, error: signedError } = await client.storage
+      .from('incidente-evidencia')
+      .createSignedUrl(storedValue, 15 * 60);
+    if (signedError || !signedData?.signedUrl) throw signedError ?? new Error('No fue posible abrir la evidencia.');
 
     return {
       id: String(item.id),
-      url,
-      mimeType: item.file_type ?? 'image/jpeg',
+      url: signedData.signedUrl,
+      mimeType: item.mime_type ?? 'image/jpeg',
       createdAt: formatDateTime(item.created_at)
     };
   }));

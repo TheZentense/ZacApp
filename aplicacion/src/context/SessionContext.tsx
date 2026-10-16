@@ -1,6 +1,8 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import type { UserRole as DatabaseRole } from '@/types/domain';
+import { isDatabaseRole, visualRoleFor } from '@/services/sessionPolicy';
 
 export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 
@@ -9,6 +11,11 @@ type SessionContextValue = {
   email: string;
   fullName: string;
   phone: string;
+  databaseRole: DatabaseRole | null;
+  userId: string | null;
+  departmentId: number | null;
+  profileError: string;
+  isPasswordRecovery: boolean;
   department: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -28,6 +35,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [databaseRole, setDatabaseRole] = useState<DatabaseRole | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [departmentId, setDepartmentId] = useState<number | null>(null);
+  const [profileError, setProfileError] = useState('');
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const recoveryRef = useRef(false);
+  const identityVersion = useRef(0);
   const [department, setDepartment] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
@@ -37,29 +51,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setEmail(normalizedEmail);
     setIsAuthenticated(Boolean(normalizedEmail));
 
-    if (normalizedEmail.startsWith('superadmin')) {
-      setRole('superadmin');
-      setDepartment(null);
-    } else if (normalizedEmail.startsWith('admin')) {
-      setRole('admin');
-      setDepartment(null);
-    } else if (normalizedEmail.includes('mantenimiento.agua')) {
-      setRole('maintenance');
-      setDepartment('Agua potable');
-    } else if (normalizedEmail.includes('empleado.agua')) {
-      setRole('employee');
-      setDepartment('Agua potable');
-    } else {
-      setRole('citizen');
-      setDepartment(null);
-    }
+    setRole('citizen');
+    setDatabaseRole(null);
+    setUserId(null);
+    setDepartmentId(null);
+    setDepartment(null);
   }, []);
 
   const hydrateIdentity = useCallback(async (user?: User | null) => {
+    const version = ++identityVersion.current;
+    const isCurrentIdentity = () => version === identityVersion.current;
     if (!user) {
       applyEmailFallback(null);
       setFullName('');
       setPhone('');
+      setProfileError('');
       return true;
     }
 
@@ -69,11 +75,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('full_name, phone, role, status, department:departments(name)')
+      .select('full_name, phone, role, status, department_id, department:departments(name)')
       .eq('id', user.id)
       .single();
 
-    if (error || !data) return true;
+    if (!isCurrentIdentity()) return true;
+    if (error || !data || !isDatabaseRole(data.role)) {
+      setProfileError('No fue posible verificar tu perfil. Las funciones del personal no están disponibles.');
+      return true;
+    }
     if (data.status === 'INACTIVO') {
       applyEmailFallback(null);
       setFullName('');
@@ -81,16 +91,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setDepartment(null);
       return false;
     }
-    const databaseRole = data.role as string;
+    const verifiedDatabaseRole = data.role;
     const departmentData = data.department as unknown as { name?: string } | { name?: string }[] | null;
     const departmentName = Array.isArray(departmentData) ? departmentData[0]?.name : departmentData?.name;
-    const normalizedEmail = user.email?.trim().toLowerCase() ?? '';
-
-    if (normalizedEmail.startsWith('superadmin')) setRole('superadmin');
-    else if (databaseRole === 'administrador' || databaseRole === 'supervisor') setRole('admin');
-    else if (databaseRole === 'mantenimiento') setRole('maintenance');
-    else if (['operador', 'coordinador', 'comunicacion'].includes(databaseRole)) setRole('employee');
-    else setRole('citizen');
+    setDatabaseRole(verifiedDatabaseRole);
+    setUserId(user.id);
+    setDepartmentId(typeof data.department_id === 'number' ? data.department_id : null);
+    setRole(visualRoleFor(verifiedDatabaseRole));
 
     setFullName(data.full_name || '');
     setPhone(data.phone || '');
@@ -108,7 +115,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     });
 
-    const { data } = client.auth.onAuthStateChange((_event, session) => {
+    const { data } = client.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        recoveryRef.current = true;
+        setIsPasswordRecovery(true);
+      }
+      if (event === 'SIGNED_OUT') {
+        recoveryRef.current = false;
+        setIsPasswordRecovery(false);
+      }
       hydrateIdentity(session?.user).finally(() => setIsLoading(false));
     });
 
@@ -121,6 +136,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       email,
       fullName,
       phone,
+      databaseRole,
+      userId,
+      departmentId,
+      profileError,
+      isPasswordRecovery,
       department,
       isAuthenticated,
       isLoading,
@@ -155,9 +175,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (error) throw error;
       },
       completePasswordRecovery: async (newPassword: string) => {
-        if (!supabase) throw new Error('Supabase no está configurado.');
+        if (!supabase || !recoveryRef.current) throw new Error('Solicita un enlace de recuperación válido.');
         const { error } = await supabase.auth.updateUser({ password: newPassword });
         if (error) throw error;
+        recoveryRef.current = false;
+        setIsPasswordRecovery(false);
       },
       updateProfile: async (name: string, phoneValue: string) => {
         if (!supabase) throw new Error('Supabase no está configurado.');
@@ -176,7 +198,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await hydrateIdentity(null);
       }
     }),
-    [department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, phone, role]
+    [databaseRole, department, departmentId, email, fullName, hydrateIdentity, isAuthenticated, isLoading, isPasswordRecovery, phone, profileError, role, userId]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
