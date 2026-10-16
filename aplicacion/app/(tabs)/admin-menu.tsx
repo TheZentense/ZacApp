@@ -1,99 +1,102 @@
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AppButton } from '@/components/AppButton';
-import { SectionHeader } from '@/components/SectionHeader';
-import { StatusBadge } from '@/components/StatusBadge';
-import { demoUsers, departmentLabels, getDepartmentSummary, mockIncidents } from '@/data/mockIncidents';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Redirect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing } from '@/theme/tokens';
+import { useSession } from '@/context/SessionContext';
+import { roleVisuals } from '@/theme/roles';
+
+const functions = [
+  { title: 'Gestionar reportes', copy: 'Consultar y actualizar incidencias', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Asignaciones', copy: 'Distribuir reportes entre áreas y responsables', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Panel operativo', copy: 'Consultar indicadores y carga departamental', icon: 'bar-chart-outline', route: '/' },
+  { title: 'Usuarios y accesos', copy: 'Gestionar personal, estado y departamento', icon: 'people-outline', route: '/admin/users' },
+  { title: 'Categorías y áreas', copy: 'Organizar incidencias y departamentos', icon: 'pricetags-outline', route: '/admin/catalogs' },
+  { title: 'Mi perfil', copy: 'Consultar la sesión administrativa', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const maintenanceFunctions = [
+  { title: 'Trabajo asignado', copy: 'Consultar órdenes del departamento', icon: 'clipboard-outline', route: '/reports' },
+  { title: 'Actualizar estado', copy: 'Registrar el avance de una atención', icon: 'sync-outline', route: '/reports' },
+  { title: 'Evidencia e historial', copy: 'Consultar fotografías y movimientos', icon: 'camera-outline', route: '/tracking' },
+  { title: 'Ubicaciones', copy: 'Consultar los puntos de atención', icon: 'location-outline', route: '/reports' },
+  { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const employeeFunctions = [
+  { title: 'Tareas asignadas', copy: 'Consultar únicamente el trabajo autorizado', icon: 'file-tray-full-outline', route: '/reports' },
+  { title: 'Mi seguimiento', copy: 'Consultar movimientos de las tareas visibles', icon: 'time-outline', route: '/tracking' },
+  { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
+] as const;
 
 export default function AdminMenuScreen() {
-  const openDemo = (title: string) => Alert.alert(title, 'Accion administrativa simulada.');
+  const { width } = useWindowDimensions();
+  const { role, databaseRole } = useSession();
+  const visual = roleVisuals[role];
+  const visibleFunctions = databaseRole === 'administrador' ? functions : databaseRole === 'mantenimiento' ? maintenanceFunctions : employeeFunctions;
+  const title = databaseRole === 'administrador' ? 'Funciones administrativas' : databaseRole === 'mantenimiento' ? 'Herramientas de campo' : 'Funciones del departamento';
+  const isWide = width >= 780;
+
+  if (databaseRole === 'ciudadano' || !databaseRole) return <Redirect href="/services" />;
+
+  const openFunction = (item: (typeof visibleFunctions)[number]) => {
+    router.push(item.route);
+  };
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
-      <View style={styles.header}>
-        <Text style={styles.kicker}>Administracion</Text>
-        <Text style={styles.title}>Usuarios, departamentos y asignaciones</Text>
-        <Text style={styles.copy}>Vista sencilla para presentar funciones administrativas sin backend real.</Text>
-      </View>
-
-      <View style={styles.card}>
-        <SectionHeader title="Usuarios" meta={`${demoUsers.length} demo`} />
-        {demoUsers.map((user) => (
-          <View key={user.id} style={styles.row}>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{user.name}</Text>
-              <Text style={styles.rowMeta}>{user.email}</Text>
-            </View>
-            <View style={styles.rowRight}>
-              <Text style={styles.smallLabel}>{user.role}</Text>
-              <Text style={styles.activeText}>{user.status}</Text>
-            </View>
+      <View style={[styles.header, { backgroundColor: visual.primary }]}>
+        <View style={styles.headerMain}>
+          <View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="options-outline" size={26} color={visual.primary} /></View>
+          <View style={styles.headerText}>
+            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · CENTRO DE CONTROL</Text>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.copy}>Selecciona una función disponible para tu rol.</Text>
           </View>
-        ))}
+        </View>
+        <View style={styles.moduleCount}><Text style={[styles.moduleNumber, { color: visual.accent }]}>{visibleFunctions.length}</Text><Text style={styles.moduleLabel}>módulos disponibles</Text></View>
       </View>
 
-      <View style={styles.card}>
-        <SectionHeader title="Departamentos" meta="Resumen" />
-        {departmentLabels.map((department) => {
-          const summary = getDepartmentSummary(department);
-          return (
-            <View key={department} style={styles.departmentRow}>
-              <Text style={styles.rowTitle}>{department}</Text>
-              <View style={styles.metricsRow}>
-                <Metric label="Pendientes" value={summary.pending} />
-                <Metric label="En proceso" value={summary.inProgress} />
-                <Metric label="Resueltos" value={summary.resolved} />
-              </View>
+      <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>HERRAMIENTAS</Text><Text style={styles.sectionTitle}>¿Qué deseas hacer?</Text></View>
+      <View style={styles.grid}>
+        {visibleFunctions.map((item) => (
+          <Pressable key={item.title} style={({ pressed }) => [styles.card, isWide && styles.cardWide, pressed && styles.pressed]} onPress={() => openFunction(item)}>
+            <View style={[styles.icon, { backgroundColor: visual.primary }]}><Ionicons name={item.icon} size={23} color={colors.white} /></View>
+            <View style={styles.cardText}>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.cardCopy}>{item.copy}</Text>
             </View>
-          );
-        })}
-      </View>
-
-      <View style={styles.card}>
-        <SectionHeader title="Asignaciones" meta="Reporte → Departamento → Personal → Estado" />
-        {mockIncidents.slice(0, 5).map((incident) => (
-          <View key={incident.id} style={styles.assignment}>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{incident.code}</Text>
-              <Text style={styles.rowMeta}>{incident.department} → Personal demo</Text>
-            </View>
-            <StatusBadge status={incident.status} />
-          </View>
+            <View style={[styles.cardArrow, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="arrow-forward" size={17} color={visual.primary} /></View>
+          </Pressable>
         ))}
-        <AppButton label="Crear asignacion" icon="git-branch-outline" onPress={() => openDemo('Asignaciones')} />
       </View>
     </ScrollView>
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.metric}>
-      <Text style={styles.metricValue}>{value}</Text>
-      <Text style={styles.metricLabel}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.background },
-  page: { width: '100%', maxWidth: 980, alignSelf: 'center', padding: spacing.lg, gap: spacing.md },
-  header: { backgroundColor: colors.white, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
-  kicker: { color: colors.secondary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
-  title: { color: colors.primary, fontSize: 24, fontWeight: '800', marginTop: spacing.xs },
-  copy: { color: colors.muted, lineHeight: 21, marginTop: spacing.xs },
-  card: { backgroundColor: colors.white, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  rowText: { flex: 1 },
-  rowTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  rowMeta: { color: colors.muted, marginTop: 2 },
-  rowRight: { alignItems: 'flex-end', gap: 2 },
-  smallLabel: { color: colors.secondary, fontSize: 12, fontWeight: '800' },
-  activeText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
-  departmentRow: { gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
-  metricsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  metric: { flexGrow: 1, flexBasis: 100, backgroundColor: colors.surface, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, padding: spacing.sm },
-  metricValue: { color: colors.primary, fontSize: 18, fontWeight: '800' },
-  metricLabel: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  assignment: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border }
+  page: { width: '100%', maxWidth: 900, alignSelf: 'center', padding: spacing.lg, gap: spacing.lg },
+  header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.lg, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.lg },
+  headerMain: { flex: 1, minWidth: 260, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  headerIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
+  headerText: { flex: 1 },
+  eyebrow: { fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginBottom: spacing.xs },
+  title: { color: colors.white, fontSize: 24, fontWeight: '800' },
+  copy: { color: '#DDE8D7', marginTop: spacing.xs, lineHeight: 20 },
+  moduleCount: { minWidth: 130, borderRadius: radius.lg, padding: spacing.md, backgroundColor: 'rgba(255,255,255,0.10)' },
+  moduleNumber: { fontSize: 28, fontWeight: '900' },
+  moduleLabel: { color: '#DDE8D7', fontSize: 12, fontWeight: '700' },
+  sectionHeading: { gap: 2 },
+  sectionKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
+  sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  card: { minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  cardWide: { flexBasis: 340, flexGrow: 1 },
+  icon: { width: 46, height: 46, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  cardText: { flex: 1 },
+  cardTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
+  cardCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
+  cardArrow: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  pressed: { opacity: 0.8 }
 });

@@ -32,7 +32,6 @@ El proyecto utiliza una sola base de código para ofrecer compatibilidad con And
 | TypeScript | Tipado estático y mantenibilidad |
 | Supabase Auth | Autenticación y administración de sesiones |
 | Supabase Storage | Almacenamiento de evidencias |
-| Supabase Realtime | Actualización de información en tiempo real |
 | PostgreSQL | Persistencia principal de datos |
 
 ---
@@ -169,17 +168,38 @@ aplicacion/
 
 La versión actual incorpora:
 
-- Pantalla de ingreso.
-- Navegación principal.
-- Inicio del ciudadano.
-- Registro básico de incidentes.
-- Consulta de reportes.
-- Visualización de estados.
-- Perfil del usuario.
-- Diseño adaptable para dispositivos móviles y web.
-- Configuración inicial de Supabase.
-- Migración inicial de PostgreSQL.
-- Seguridad inicial mediante Row Level Security.
+- Registro, confirmación de correo, inicio y cierre de sesión.
+- Recuperación y cambio de contraseña mediante Supabase Auth.
+- Navegación y paneles diferenciados por rol.
+- Registro ciudadano de incidentes con categoría, ubicación y fotografía.
+- Consulta de reportes limitada por propietario, rol y departamento.
+- Búsqueda y filtros por estado, prioridad y departamento.
+- Asignación de prioridad, área responsable y personal disponible.
+- Flujo controlado de estados con historial atómico y observaciones.
+- Evidencias privadas almacenadas mediante Supabase Storage.
+- Gestión administrativa de usuarios, accesos, categorías y departamentos.
+- Bloqueo de acceso para cuentas inactivas.
+- Consulta y edición protegida del perfil personal.
+- Diseño adaptable para Android y web.
+- Migraciones reproducibles y seguridad mediante Row Level Security.
+
+---
+
+## Base de datos y migraciones
+
+Los archivos de `supabase/migrations/` forman parte de la aplicación y deben aplicarse en orden cronológico sobre la instancia de Supabase correspondiente antes de probar las funciones más recientes.
+
+Las migraciones incluyen:
+
+- Estructura de perfiles, reportes, categorías y departamentos.
+- Políticas de acceso por usuario, rol y departamento.
+- Storage privado para evidencias.
+- Gestión administrativa de usuarios y catálogos.
+- Protección de cuentas inactivas.
+- Actualización segura del perfil.
+- Transiciones atómicas de estado e historial.
+
+Las credenciales administrativas, claves privadas y valores reales del entorno no deben guardarse en el repositorio.
 
 ---
 
@@ -196,7 +216,7 @@ Administrador
 Comunicación
 ```
 
-Cada rol contará con funciones y permisos relacionados con su participación en el proceso de atención de incidentes.
+Cada rol dispone de funciones y permisos relacionados con su participación en el proceso de atención de incidentes.
 
 ---
 
