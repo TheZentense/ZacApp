@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { isIncidentPriority, type Incident, type IncidentStatus } from '@/types/domain';
 import { requireBackendCapability } from '@/lib/backendCapabilities';
+import { readEvidenceBytes } from '@/services/evidenceImages';
+import { personalTasksPendingMessage, reportReadScopeFor } from '@/services/sessionPolicy';
 
 type CreateReportInput = {
   categoryName: string;
@@ -111,18 +113,35 @@ function categoryName(category: IncidentRow['category']) {
   return category?.name ?? 'Sin categoría';
 }
 
-export async function listReports(): Promise<Incident[]> {
+async function requireReportReadAccess() {
   if (!supabase) throw new Error('Supabase no está configurado.');
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user) throw new Error('Inicia sesión para consultar reportes.');
+  const { data: profile, error } = await supabase.from('profiles').select('role, department_id').eq('id', auth.user.id).single();
+  if (error || !profile) throw new Error('No fue posible verificar tu perfil.');
+  const scope = reportReadScopeFor(profile.role);
+  if (scope === 'pending') throw new Error(personalTasksPendingMessage);
+  const departmentId = profile.department_id;
+  if (scope === 'department' && (typeof departmentId !== 'number' || !Number.isSafeInteger(departmentId) || departmentId <= 0)) throw new Error('Tu perfil no tiene un departamento verificado.');
+  return { client: supabase, scope, userId: auth.user.id, departmentId: departmentId as number | null };
+}
 
-  const { data, error } = await supabase
+export async function listReports(): Promise<Incident[]> {
+  const { client, scope, userId, departmentId } = await requireReportReadAccess();
+  let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, status, priority, assigned_to, created_at, updated_at, category:categories(name)')
-    .order('created_at', { ascending: false });
+    .select('id, code, title, description, address_reference, status, priority, assigned_to, created_at, updated_at, category:categories(name)');
+  if (scope === 'citizen') query = query.eq('citizen_id', userId);
+  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) throw error;
 
   // An optional relation must not break the existing real-report query on an older schema.
-  const { data: assignments, error: assignmentsError } = await supabase.from('incidents').select('id, assigned_department_id, department:departments!assigned_department_id(name)');
+  let assignmentQuery = client.from('incidents').select('id, assigned_department_id, department:departments!assigned_department_id(name)');
+  if (scope === 'citizen') assignmentQuery = assignmentQuery.eq('citizen_id', userId);
+  if (scope === 'department') assignmentQuery = assignmentQuery.eq('assigned_department_id', departmentId);
+  const { data: assignments, error: assignmentsError } = await assignmentQuery;
   const assignmentById = new Map<string, Partial<IncidentRow>>();
   if (!assignmentsError) for (const assignment of assignments ?? []) assignmentById.set(assignment.id, assignment as unknown as Partial<IncidentRow>);
 
@@ -161,10 +180,7 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
   if (incidentError || !incident) throw new Error('El reporte no está disponible para esta sesión.');
   if (incident.citizen_id !== auth.user.id) requireBackendCapability('staffEvidence');
   if (evidence.mimeType !== 'image/jpeg') throw new Error('Selecciona una fotografía JPEG.');
-  const response = await fetch(evidence.uri);
-  if (!response.ok) throw new Error('No fue posible preparar la fotografía.');
-  const file = await response.arrayBuffer();
-  if (!file.byteLength || file.byteLength > 5 * 1024 * 1024) throw new Error('La fotografía debe pesar como máximo 5 MB.');
+  const file = await readEvidenceBytes(evidence.uri);
   const path = `${auth.user.id}/${incidentId}/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
   const { error: uploadError } = await supabase.storage.from('incidente-evidencia').upload(path, file, { contentType: evidence.mimeType, cacheControl: '3600', upsert: false });
   if (uploadError) throw uploadError;
@@ -178,10 +194,7 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
 }
 
 export async function listReportEvidence(incidentId: string): Promise<ReportEvidence[]> {
-  if (!supabase) throw new Error('Supabase no está configurado.');
-  const client = supabase;
-  const { data: visible, error: visibilityError } = await client.from('incidents').select('id').eq('id', incidentId).single();
-  if (visibilityError || !visible) throw new Error('El reporte no está disponible para esta sesión.');
+  const client = await requireVisibleReport(incidentId);
   const { data, error } = await client.from('incident_evidence').select('id, storage_path, mime_type, uploaded_by, created_at').eq('incident_id', incidentId).order('created_at');
   if (error) throw error;
   return Promise.all((data ?? []).map(async (item) => {
@@ -194,9 +207,9 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
 }
 
 export async function listReportHistory(incidentId: string): Promise<ReportHistoryEntry[]> {
-  if (!supabase) throw new Error('Supabase no está configurado.');
+  const client = await requireVisibleReport(incidentId);
 
-  const { data, error } = await supabase
+  const { data, error } = await client
     .from('incident_history')
     .select('id, previous_status, new_status, note, created_at, actor:profiles!incident_history_changed_by_fkey(full_name)')
     .eq('incident_id', incidentId)
@@ -218,62 +231,26 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
   });
 }
 
+async function requireVisibleReport(incidentId: string) {
+  const { client, scope, userId, departmentId } = await requireReportReadAccess();
+  let query = client.from('incidents').select('id').eq('id', incidentId);
+  if (scope === 'citizen') query = query.eq('citizen_id', userId);
+  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  const { data, error } = await query.single();
+  if (error || !data) throw new Error('El reporte no está disponible para esta sesión.');
+  return client;
+}
+
 type UpdateReportStatusResult = {
   updatedAt: string;
   historyRecorded: boolean;
 };
 
 export async function updateReportStatus(
-  incidentId: string,
-  previousStatus: IncidentStatus,
-  newStatus: IncidentStatus,
-  note: string,
-  departmentName?: string
+  ...input: [incidentId: string, previousStatus: IncidentStatus, newStatus: IncidentStatus, note: string, departmentName?: string]
 ): Promise<UpdateReportStatusResult> {
-  if (!supabase) throw new Error('Supabase no está configurado.');
-  if (previousStatus === newStatus) throw new Error('Selecciona un estado diferente al actual.');
-
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  if (authError || !authData.user) throw new Error('La sesión ya no está disponible. Inicia sesión nuevamente.');
-
-  let assignedDepartmentId: number | null = null;
-  if (newStatus === 'ASIGNADO') {
-    if (!departmentName) throw new Error('No fue posible determinar el departamento responsable.');
-    const { data: department, error: departmentError } = await supabase
-      .from('departments')
-      .select('id')
-      .eq('name', departmentName)
-      .eq('active', true)
-      .single();
-    if (departmentError || !department) throw new Error('No existe un departamento activo para esta categoría.');
-    assignedDepartmentId = department.id;
-  }
-
-  const updateValues: { status: IncidentStatus; assigned_department_id?: number } = { status: newStatus };
-  if (assignedDepartmentId) updateValues.assigned_department_id = assignedDepartmentId;
-
-  const { data: updatedIncident, error: updateError } = await supabase
-    .from('incidents')
-    .update(updateValues)
-    .eq('id', incidentId)
-    .eq('status', previousStatus)
-    .select('updated_at')
-    .single();
-
-  if (updateError || !updatedIncident) {
-    throw new Error(updateError?.message ?? 'El reporte cambió desde otra sesión. Actualiza la lista e intenta nuevamente.');
-  }
-
-  const { error: historyError } = await supabase.from('incident_history').insert({
-    incident_id: incidentId,
-    changed_by: authData.user.id,
-    previous_status: previousStatus,
-    new_status: newStatus,
-    note: note.trim() || null
-  });
-
-  return {
-    updatedAt: formatDate(updatedIncident.updated_at),
-    historyRecorded: !historyError
-  };
+  void input;
+  requireBackendCapability('atomicTransitions');
+  // No legacy UPDATE fallback, even if a flag is changed before the RPC is reviewed.
+  throw new Error('La actualización segura de estados todavía no está habilitada.');
 }

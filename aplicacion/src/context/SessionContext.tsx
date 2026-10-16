@@ -15,6 +15,8 @@ type SessionContextValue = {
   fullName: string;
   phone: string;
   databaseRole: DatabaseRole | null;
+  userId: string | null;
+  departmentId: number | null;
   profileError: string;
   isPasswordRecovery: boolean;
   department: string | null;
@@ -36,6 +38,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [databaseRole, setDatabaseRole] = useState<DatabaseRole | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [departmentId, setDepartmentId] = useState<number | null>(null);
   const [profileError, setProfileError] = useState('');
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const recoveryRef = useRef(false);
@@ -53,6 +57,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // An email address never grants a role, including when profile lookup fails.
     setRole('citizen');
     setDatabaseRole(null);
+    setUserId(null);
+    setDepartmentId(null);
     setDepartment(null);
   }, []);
 
@@ -72,7 +78,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       if (!supabase) return;
       // Read only existing fields. phone/status and their policies are not verified.
-      const { data, error } = await supabase.from('profiles').select('full_name, role, department:departments(name)').eq('id', user.id).single();
+      const { data, error } = await supabase.from('profiles').select('full_name, role, department_id, department:departments(name)').eq('id', user.id).single();
       if (!current()) return;
       if (error || !data || !isDatabaseRole(data.role)) {
         setProfileError('No fue posible verificar tu perfil. Las funciones del personal no están disponibles.');
@@ -80,6 +86,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       const area = data.department as unknown as { name?: string } | { name?: string }[] | null;
       setDatabaseRole(data.role);
+      setUserId(user.id);
+      setDepartmentId(typeof data.department_id === 'number' && Number.isSafeInteger(data.department_id) && data.department_id > 0 ? data.department_id : null);
       setRole(visualRoleFor(data.role));
       setFullName(data.full_name || '');
       setDepartment((Array.isArray(area) ? area[0]?.name : area?.name) ?? null);
@@ -135,6 +143,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       fullName,
       phone: '',
       databaseRole,
+      userId,
+      departmentId,
       profileError,
       isPasswordRecovery,
       department,
@@ -188,7 +198,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         await hydrateIdentity(null);
       }
     }),
-    [databaseRole, department, email, fullName, hydrateIdentity, isAuthenticated, isLoading, isPasswordRecovery, profileError, role]
+    [databaseRole, department, departmentId, email, fullName, hydrateIdentity, isAuthenticated, isLoading, isPasswordRecovery, profileError, role, userId]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

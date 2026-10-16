@@ -49,6 +49,7 @@ export default function NewReportScreen() {
   const imageInFlight = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
+  const createdIncidentRef = useRef<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const applyCategories = (availableCategories: ReportCategory[]) => {
@@ -148,12 +149,14 @@ export default function NewReportScreen() {
   };
 
   const submit = async () => {
-    if (requestInFlight.current || imageInFlight.current || createdIncident) return;
+    if (requestInFlight.current || imageInFlight.current || createdIncidentRef.current) return;
     if (!category || !description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega la descripción y ubicación.');
     requestInFlight.current = true;
     setIsSubmitting(true);
     try {
       const incident = await createReport({ categoryName: category, description, location });
+      // Keep the identifier immediately, including for already queued submit handlers.
+      createdIncidentRef.current = incident;
       if (mountedRef.current) setCreatedIncident(incident);
       if (evidence) {
         try {
@@ -268,7 +271,8 @@ export default function NewReportScreen() {
       <Modal visible={cameraOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setCameraOpen(false)}>
         <View style={styles.cameraPage}>
           {cameraPermission?.granted ? (
-            <CameraView ref={cameraRef} style={styles.cameraPreview} facing="back" onCameraReady={() => setCameraReady(true)}>
+            <>
+              <CameraView ref={cameraRef} style={styles.cameraPreview} facing="back" onCameraReady={() => setCameraReady(true)} />
               <View style={styles.cameraOverlay}>
                 <Pressable style={styles.closeCamera} onPress={() => setCameraOpen(false)}>
                   <Ionicons name="close" size={24} color={colors.white} />
@@ -279,7 +283,7 @@ export default function NewReportScreen() {
                 </Pressable>
                 <Text style={styles.cameraNote}>{isCapturing ? 'Procesando fotografía...' : 'Centra la incidencia y presiona el botón'}</Text>
               </View>
-            </CameraView>
+            </>
           ) : (
             <View style={styles.permissionPage}>
               <Ionicons name="camera-outline" size={52} color={colors.primary} />
@@ -342,7 +346,7 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.8 },
   cameraPage: { flex: 1, backgroundColor: '#000000' },
   cameraPreview: { flex: 1 },
-  cameraOverlay: { flex: 1, justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingTop: 54, paddingBottom: 36, backgroundColor: 'rgba(0,0,0,0.12)' },
+  cameraOverlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingTop: 54, paddingBottom: 36, backgroundColor: 'rgba(0,0,0,0.12)' },
   closeCamera: { alignSelf: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)', borderRadius: radius.pill, paddingHorizontal: spacing.md, minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   closeCameraText: { color: colors.white, fontWeight: '800' },
   shutter: { width: 78, height: 78, borderRadius: 39, borderWidth: 5, borderColor: colors.white, alignItems: 'center', justifyContent: 'center', marginTop: 'auto' },
