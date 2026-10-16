@@ -11,7 +11,7 @@ type CreateReportInput = {
   location: string;
   latitude: number;
   longitude: number;
-  evidence: ReportEvidenceInput;
+  evidence: ReportEvidenceInput[];
 };
 
 export type ReportEvidenceInput = {
@@ -116,28 +116,38 @@ export async function createReport({ categoryId, description, location, latitude
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error('Inicia sesión para registrar un reporte.');
-  if (evidence.mimeType !== 'image/jpeg') throw new Error('Selecciona una fotografía JPEG.');
+  if (evidence.length < 1 || evidence.length > 5 || evidence.some((item) => item.mimeType !== 'image/jpeg')) {
+    throw new Error('Adjunta entre una y cinco fotografías JPEG.');
+  }
 
   const incidentId = Crypto.randomUUID();
   const departmentCode = await categoryStorageCode(categoryId);
-  const fileData = await readEvidenceBytes(evidence.uri);
-  const storagePath = evidenceStoragePath({
-    departmentCode,
-    categoryId,
-    incidentId,
-    userId: authData.user.id,
-    actor: 'ciudadano',
-    filename: 'evidencia-inicial.jpg'
-  });
-  const { error: uploadError } = await supabase.storage
-    .from('incidente-evidencia')
-    .upload(storagePath, fileData, {
-      contentType: evidence.mimeType,
-      cacheControl: '3600',
-      upsert: false
-    });
-
-  if (uploadError) throw uploadError;
+  const uploadedPaths: string[] = [];
+  try {
+    for (const [index, item] of evidence.entries()) {
+      const storagePath = evidenceStoragePath({
+        departmentCode,
+        categoryId,
+        incidentId,
+        userId: authData.user.id,
+        actor: 'ciudadano',
+        filename: index === 0 ? 'evidencia-inicial.jpg' : `evidencia-adicional-${String(index + 1).padStart(2, '0')}.jpg`
+      });
+      const fileData = await readEvidenceBytes(item.uri);
+      const { error: uploadError } = await supabase.storage
+        .from('incidente-evidencia')
+        .upload(storagePath, fileData, {
+          contentType: item.mimeType,
+          cacheControl: '3600',
+          upsert: false
+        });
+      if (uploadError) throw uploadError;
+      uploadedPaths.push(storagePath);
+    }
+  } catch (error) {
+    if (uploadedPaths.length) await supabase.storage.from('incidente-evidencia').remove(uploadedPaths);
+    throw error;
+  }
 
   const { data, error } = await supabase.rpc('create_incident_with_evidence', {
     p_incident_id: incidentId,
@@ -146,12 +156,12 @@ export async function createReport({ categoryId, description, location, latitude
     p_address_reference: location.trim(),
     p_latitude: latitude,
     p_longitude: longitude,
-    p_storage_path: storagePath,
-    p_mime_type: evidence.mimeType
+    p_storage_paths: uploadedPaths,
+    p_mime_type: 'image/jpeg'
   });
 
   if (error || !data?.[0]) {
-    await supabase.storage.from('incidente-evidencia').remove([storagePath]);
+    await supabase.storage.from('incidente-evidencia').remove(uploadedPaths);
     throw new Error(error?.message ?? 'No fue posible registrar el reporte con su evidencia.');
   }
 

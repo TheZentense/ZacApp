@@ -42,14 +42,23 @@ export async function readEvidenceBytes(uri: string): Promise<ArrayBuffer> {
 export async function optimizeEvidence(uri: string): Promise<ReportEvidenceInput> {
   const context = ImageManipulator.manipulate(uri);
   const image = await context.renderAsync();
-  if (image.width > 1600) context.resize({ width: 1600, height: null });
+  if (Math.max(image.width, image.height) > 1600) {
+    context.resize(image.width >= image.height ? { width: 1600, height: null } : { width: null, height: 1600 });
+  }
   const resized = await context.renderAsync();
   const result = await resized.saveAsync({ compress: 0.72, format: SaveFormat.JPEG });
   return { uri: result.uri, mimeType: 'image/jpeg' };
 }
 
-export async function selectEvidenceImage(): Promise<ReportEvidenceInput | null> {
-  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1, selectionLimit: 1 });
-  if (result.canceled || !result.assets[0]?.uri) return null;
-  return optimizeEvidence(result.assets[0].uri);
+export async function selectEvidenceImages(limit: number): Promise<ReportEvidenceInput[]> {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ['images'],
+    allowsEditing: false,
+    allowsMultipleSelection: limit > 1,
+    quality: 1,
+    selectionLimit: limit
+  });
+  if (result.canceled) return [];
+  const uris = result.assets.map((asset) => asset.uri).filter(Boolean).slice(0, limit);
+  return Promise.all(uris.map(optimizeEvidence));
 }

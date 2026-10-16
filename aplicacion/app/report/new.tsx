@@ -6,11 +6,11 @@ import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { ErrorState, LoadingState } from '@/components/DataState';
-import { createReport, EvidenceLinkError, listReportCategories, uploadReportEvidence, type ReportCategory, type ReportEvidenceInput } from '@/services/reports';
+import { createReport, listReportCategories, type ReportCategory, type ReportEvidenceInput } from '@/services/reports';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
-import { optimizeEvidence, selectEvidenceImage } from '@/services/evidenceImages';
+import { optimizeEvidence, selectEvidenceImages } from '@/services/evidenceImages';
 
 const previewCategories: ReportCategory[] = [
   { id: 1, name: 'Alumbrado público' },
@@ -44,9 +44,7 @@ export default function NewReportScreen() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [evidence, setEvidence] = useState<ReportEvidenceInput | null>(null);
-  const [evidenceUploadError, setEvidenceUploadError] = useState('');
-  const [canRetryEvidence, setCanRetryEvidence] = useState(true);
+  const [evidence, setEvidence] = useState<ReportEvidenceInput[]>([]);
   const cameraRef = useRef<CameraView>(null);
   const requestInFlight = useRef(false);
   const imageInFlight = useRef(false);
@@ -144,7 +142,7 @@ export default function NewReportScreen() {
       const picture = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (!picture?.uri) throw new Error('La cámara no devolvió una fotografía.');
       const optimized = await optimizeEvidence(picture.uri);
-      if (mountedRef.current) { setEvidence(optimized); setEvidenceUploadError(''); setCameraOpen(false); }
+      if (mountedRef.current) { setEvidence((current) => current.length < 5 ? [...current, optimized] : current); setCameraOpen(false); }
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible tomar la fotografía', 'Intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
@@ -155,23 +153,11 @@ export default function NewReportScreen() {
     imageInFlight.current = true;
     setIsCapturing(true);
     try {
-      const selectedImage = await selectEvidenceImage();
-      if (mountedRef.current && selectedImage) { setEvidence(selectedImage); setEvidenceUploadError(''); }
+      const selectedImages = await selectEvidenceImages(5 - evidence.length);
+      if (mountedRef.current && selectedImages.length) setEvidence((current) => [...current, ...selectedImages].slice(0, 5));
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible preparar la fotografía', 'Selecciona otra imagen e intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
-  };
-
-  const retryEvidenceUpload = async () => {
-    if (!createdIncident || !evidence || requestInFlight.current || !canRetryEvidence) return;
-    requestInFlight.current = true;
-    setIsSubmitting(true);
-    try {
-      await uploadReportEvidence(createdIncident.id, evidence);
-      if (mountedRef.current) setEvidenceUploadError('');
-    } catch (error) {
-      if (mountedRef.current) { setEvidenceUploadError(error instanceof Error ? error.message : 'No fue posible adjuntar la fotografía.'); setCanRetryEvidence(!(error instanceof EvidenceLinkError)); }
-    } finally { requestInFlight.current = false; if (mountedRef.current) setIsSubmitting(false); }
   };
 
   const submit = async () => {
@@ -180,7 +166,7 @@ export default function NewReportScreen() {
     if (!fullName.trim() || !email.trim()) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
     if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
     if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
-    if (!evidence) return Alert.alert('Fotografía requerida', 'Toma o selecciona una fotografía del incidente antes de enviar.');
+    if (!evidence.length) return Alert.alert('Fotografía requerida', 'Toma o selecciona al menos una fotografía del incidente antes de enviar.');
     requestInFlight.current = true;
     setIsSubmitting(true);
     try {
@@ -195,7 +181,6 @@ export default function NewReportScreen() {
       // Keep the identifier immediately, including for already queued submit handlers.
       createdIncidentRef.current = incident;
       if (mountedRef.current) setCreatedIncident(incident);
-      if (mountedRef.current) setEvidenceUploadError('');
     } catch (error) {
       if (mountedRef.current) Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Revisa los datos y la conexión antes de intentar nuevamente.');
     } finally { requestInFlight.current = false; if (mountedRef.current) setIsSubmitting(false); }
@@ -225,11 +210,8 @@ export default function NewReportScreen() {
           <View style={styles.summaryRow}><Ionicons name="location-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Ubicación</Text><Text style={styles.summaryValue}>{location}</Text></View></View>
           {coordinates && <View style={styles.summaryRow}><Ionicons name="navigate-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Coordenadas GPS</Text><Text style={styles.summaryValue}>{coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}</Text></View></View>}
           <View style={styles.summaryRow}><Ionicons name="time-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Estado inicial</Text><Text style={styles.summaryValue}>Registrado</Text></View></View>
-          {evidence && <View style={styles.summaryRow}><Ionicons name={evidenceUploadError ? 'alert-circle-outline' : 'image-outline'} size={19} color={evidenceUploadError ? colors.danger : colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Evidencia</Text><Text style={[styles.summaryValue, evidenceUploadError && styles.evidenceErrorText]}>{isSubmitting ? 'Adjuntando fotografía...' : evidenceUploadError ? 'Pendiente de subir' : 'Fotografía adjunta'}</Text></View></View>}
+          {evidence.length > 0 && <View style={styles.summaryRow}><Ionicons name="images-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Evidencia</Text><Text style={styles.summaryValue}>{evidence.length} {evidence.length === 1 ? 'fotografía adjunta' : 'fotografías adjuntas'}</Text></View></View>}
         </View>
-
-        {isSubmitting ? <LoadingState label="Adjuntando fotografía..." /> : null}
-        {evidenceUploadError ? <View style={styles.uploadError}><Text style={styles.uploadErrorTitle}>El reporte sí fue registrado</Text><Text style={styles.uploadErrorCopy}>{evidenceUploadError}</Text>{canRetryEvidence && <AppButton label="Reintentar fotografía" disabled={isSubmitting} icon="cloud-upload-outline" onPress={retryEvidenceUpload} />}</View> : null}
 
         <View style={styles.confirmationActions}>
           <AppButton label="Ver mis reportes" icon="documents-outline" onPress={() => router.replace('/reports')} />
@@ -295,24 +277,28 @@ export default function NewReportScreen() {
         </Pressable>
 
         <View style={styles.divider} />
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Se requiere una fotografía para validar el reporte.</Text></View></View>
-        {evidence ? (
-          <View style={styles.evidenceCard}>
-            <Image source={{ uri: evidence.uri }} style={styles.evidencePreview} />
-            <View style={styles.evidenceDetails}><Text style={styles.evidenceTitle}>Fotografía lista</Text><Text style={styles.evidenceCopy}>Se comprimió para reducir el uso de datos y se adjuntará al enviar.</Text><View style={styles.evidenceActions}><Pressable onPress={openCamera} disabled={isSubmitting || isCapturing} style={styles.inlineAction}><Ionicons name="camera-outline" size={18} color={colors.primary} /><Text style={styles.inlineActionText}>Repetir</Text></Pressable><Pressable onPress={selectEvidence} disabled={isSubmitting || isCapturing} style={styles.inlineAction}><Ionicons name="images-outline" size={18} color={colors.primary} /><Text style={styles.inlineActionText}>Cambiar</Text></Pressable><Pressable onPress={() => setEvidence(null)} disabled={isSubmitting || isCapturing} style={styles.inlineAction}><Ionicons name="trash-outline" size={18} color={colors.danger} /><Text style={styles.removeActionText}>Quitar</Text></Pressable></View></View>
-          </View>
-        ) : (
-          <View style={styles.evidenceOptions}>
-            <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={openCamera}>
-              <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Tomar fotografía</Text><Text style={styles.cameraButtonCopy}>Usa la cámara del dispositivo.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
-            </Pressable>
-            <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={selectEvidence}>
-              <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Selecciona una imagen existente.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
-            </Pressable>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a 5 fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/5</Text></View></View>
+        {evidence.length > 0 && (
+          <View style={styles.evidenceGrid}>
+            {evidence.map((item, index) => (
+              <View key={`${item.uri}-${index}`} style={styles.evidenceTile}>
+                <Image source={{ uri: item.uri }} style={styles.evidenceTileImage} />
+                <View style={styles.evidenceTileFooter}><Text style={styles.evidenceTileLabel}>{index === 0 ? 'Inicial' : `Adicional ${index}`}</Text><Pressable accessibilityLabel={`Quitar fotografía ${index + 1}`} disabled={isSubmitting || isCapturing} onPress={() => setEvidence((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={styles.removeEvidence}><Ionicons name="trash-outline" size={17} color={colors.danger} /></Pressable></View>
+              </View>
+            ))}
           </View>
         )}
+        {evidence.length < 5 && <View style={styles.evidenceOptions}>
+          <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={openCamera}>
+            <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>{evidence.length ? 'Agregar otra fotografía' : 'Tomar fotografía'}</Text><Text style={styles.cameraButtonCopy}>Usa la cámara; se conservarán las proporciones.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+          </Pressable>
+          <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={selectEvidence}>
+            <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Puedes seleccionar hasta {5 - evidence.length} {5 - evidence.length === 1 ? 'imagen' : 'imágenes'}.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+          </Pressable>
+        </View>}
+        {evidence.length > 0 && <Text style={styles.evidenceCopy}>Las imágenes se optimizan sin estirar ni recortar y se vinculan juntas al enviar el reporte.</Text>}
 
-        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografía y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || !evidence || !fullName || !email} label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
+        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || !fullName || !email} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
 
@@ -366,6 +352,7 @@ const styles = StyleSheet.create({
   stepLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.24)', marginHorizontal: spacing.sm },
   form: { backgroundColor: colors.white, borderRadius: radius.xl, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.border },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.sm },
+  sectionHeading: { flex: 1 },
   sectionNumber: { width: 42, height: 42, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
   sectionNumberText: { color: colors.primary, fontSize: 12, fontWeight: '900' },
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
@@ -432,6 +419,14 @@ const styles = StyleSheet.create({
   summaryValue: { color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
   confirmationActions: { width: '100%', maxWidth: 520, gap: spacing.sm, marginTop: spacing.sm },
   evidenceOptions: { gap: spacing.sm },
+  evidenceCount: { minWidth: 44, height: 32, borderRadius: radius.pill, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
+  evidenceCountText: { color: colors.primary, fontSize: 12, fontWeight: '900' },
+  evidenceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
+  evidenceTile: { flexBasis: 150, flexGrow: 1, maxWidth: 230, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.surface },
+  evidenceTileImage: { width: '100%', height: 132, resizeMode: 'cover', backgroundColor: colors.softGreen },
+  evidenceTileFooter: { minHeight: 42, paddingHorizontal: spacing.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  evidenceTileLabel: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+  removeEvidence: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   galleryIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   evidenceCard: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: colors.surface },
   evidencePreview: { width: '100%', height: 240, resizeMode: 'cover', backgroundColor: colors.softGreen },
