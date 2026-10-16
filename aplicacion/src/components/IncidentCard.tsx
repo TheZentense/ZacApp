@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Incident } from '@/types/domain';
+import { isIncidentPriority, type Incident } from '@/types/domain';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 const statusStyles = {
@@ -30,6 +30,7 @@ export function IncidentCard({ incident, onPress, compact = false }: { incident:
         <View style={styles.categoryIcon}><Ionicons name={categoryIcon} size={18} color={colors.primary} /></View>
         <Text style={styles.title}>{incident.title}</Text>
       </View>
+      <Text style={styles.code}>Prioridad: {incident.priority === undefined ? 'no consultada' : isIncidentPriority(incident.priority) ? String(incident.priority) : 'no disponible'}</Text>
       {!compact && <Text style={styles.description} numberOfLines={2}>{incident.description}</Text>}
       <View style={styles.metaRow}><Text style={styles.category}>{incident.category}</Text><View style={styles.metaDot} /><Text style={styles.meta} numberOfLines={1}>{incident.location}</Text></View>
       {!compact && <Text style={styles.date}>Actualizado: {incident.updatedAt}</Text>}

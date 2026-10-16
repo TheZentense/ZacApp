@@ -1,4 +1,4 @@
-import { router, Tabs } from 'expo-router';
+import { Redirect, router, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs';
 import type { ComponentProps } from 'react';
@@ -7,6 +7,8 @@ import { useState } from 'react';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession, UserRole } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { LoadingState } from '@/components/DataState';
+import { isSupabaseConfigured } from '@/lib/supabase';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -44,7 +46,7 @@ const employeeNavigation = [
 
 function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
   const [expanded, setExpanded] = useState(true);
-  const { signOut } = useSession();
+  const { signOut, department } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
@@ -73,7 +75,7 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
         {expanded && (
           <View style={styles.brandText}>
             <Text style={[styles.brandTitle, isStaff && styles.adminText]}>ZacApp</Text>
-            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{isMaintenance || isEmployee ? `${visual.label} · Agua potable` : visual.label}</Text>
+            <Text style={[styles.brandSubtitle, isStaff && styles.adminMuted]}>{(isMaintenance || isEmployee) && department ? `${visual.label} · ${department}` : visual.label}</Text>
           </View>
         )}
       </View>
@@ -119,7 +121,7 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
 }
 
 export default function TabsLayout() {
-  const { role } = useSession();
+  const { role, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
@@ -129,6 +131,10 @@ export default function TabsLayout() {
   const navigationBackground = isStaff ? visual.primary : colors.white;
   const navigationAccent = isStaff ? visual.accent : colors.primary;
   const navigationMuted = isStaff ? '#B9C5D5' : colors.muted;
+
+  if (isLoading) return <LoadingState label="Verificando sesión..." />;
+  if (isPasswordRecovery) return <Redirect href="/reset-password" />;
+  if (isSupabaseConfigured && !isAuthenticated) return <Redirect href="/login" />;
 
   return (
     <Tabs

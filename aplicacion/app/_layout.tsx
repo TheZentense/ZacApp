@@ -11,6 +11,10 @@ export default function RootLayout() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ title: 'Ingresar' }} />
         <Stack.Screen name="register" options={{ title: 'Crear cuenta' }} />
+        <Stack.Screen name="forgot-password" options={{ title: 'Recuperar contraseña' }} />
+        <Stack.Screen name="reset-password" options={{ title: 'Nueva contraseña' }} />
+        <Stack.Screen name="admin/users" options={{ title: 'Usuarios y accesos' }} />
+        <Stack.Screen name="admin/catalogs" options={{ title: 'Categorías y departamentos' }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="report/new" options={{ title: 'Nuevo reporte', presentation: 'modal' }} />
       </Stack>

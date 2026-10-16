@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
@@ -11,6 +11,7 @@ import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
 import { updateReportStatus } from '@/services/reports';
 import { AppButton } from '@/components/AppButton';
+import { backendPendingMessage } from '@/lib/backendCapabilities';
 
 type OperationalFilter = 'TODOS' | 'PENDIENTES' | 'ASIGNADO' | 'EN_ATENCION' | 'POR_VERIFICAR' | 'CERRADO' | 'RECHAZADO';
 type Filter = OperationalFilter | 'ACTIVOS';
@@ -81,7 +82,7 @@ const maintenanceTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> 
 };
 
 export default function ReportsScreen() {
-  const { role, department } = useSession();
+  const { role, department, databaseRole } = useSession();
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [filter, setFilter] = useState<Filter>('TODOS');
@@ -93,10 +94,23 @@ export default function ReportsScreen() {
   const [statusMessage, setStatusMessage] = useState('');
   const [statusError, setStatusError] = useState('');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const incidents = useMemo(() => availableIncidents.filter((item) => matchesFilter(item.status, selectedFilter.key)), [availableIncidents, selectedFilter.key]);
+  const [search, setSearch] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('TODAS');
+  const [departmentFilter, setDepartmentFilter] = useState('TODOS');
+  const requestInFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const departmentOptions = useMemo(() => Array.from(new Set(availableIncidents.map((item) => item.department).filter((name): name is string => Boolean(name)))).sort(), [availableIncidents]);
+  const incidents = useMemo(() => availableIncidents.filter((item) => {
+    const query = search.trim().toLocaleLowerCase('es');
+    const matchesSearch = !query || [item.code, item.title, item.category, item.location].some((value) => value.toLocaleLowerCase('es').includes(query));
+    const matchesPriority = priorityFilter === 'TODAS' || (priorityFilter === 'DESCONOCIDA' ? item.priority === undefined : priorityFilter === 'INVALIDA' ? item.priority === null : item.priority === Number(priorityFilter));
+    const matchesDepartment = departmentFilter === 'TODOS' || item.department === departmentFilter;
+    return matchesFilter(item.status, selectedFilter.key) && matchesSearch && matchesPriority && matchesDepartment;
+  }), [availableIncidents, departmentFilter, priorityFilter, search, selectedFilter.key]);
   const heading = role === 'superadmin' ? 'Reportes generales' : role === 'admin' ? 'Gestión de reportes' : role === 'maintenance' ? `Asignaciones · ${department}` : role === 'employee' ? `Reportes del área · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
-  const availableTransitions = selected
+  const availableTransitions = selected && databaseRole && ['administrador', 'supervisor', 'coordinador', 'operador', 'mantenimiento'].includes(databaseRole)
     ? (role === 'maintenance' ? maintenanceTransitions[selected.status] : role === 'citizen' ? [] : administrativeTransitions[selected.status]) ?? []
     : [];
 
@@ -109,21 +123,25 @@ export default function ReportsScreen() {
   };
 
   const changeStatus = async () => {
-    if (!selected || !nextStatus || isUpdatingStatus) return;
+    if (!selected || !nextStatus || requestInFlight.current) return;
+    if (['RECHAZADO', 'POR_VERIFICAR', 'CERRADO'].includes(nextStatus) && !statusNote.trim()) { setStatusError('Agrega una observación para este cambio de estado.'); return; }
+    requestInFlight.current = true;
     setIsUpdatingStatus(true);
     setStatusMessage('');
     setStatusError('');
     try {
       const result = await updateReportStatus(selected.id, selected.status, nextStatus, statusNote, selected.category);
+      if (!mounted.current) return;
       setSelected({ ...selected, status: nextStatus, updatedAt: result.updatedAt });
       setStatusMessage(result.historyRecorded ? 'El estado y la trazabilidad se actualizaron correctamente.' : 'El estado se actualizó, pero el historial requiere revisión.');
       setNextStatus(null);
       setStatusNote('');
       await reload();
     } catch (updateError) {
-      setStatusError(updateError instanceof Error ? updateError.message : 'No fue posible actualizar el reporte.');
+      if (mounted.current) setStatusError(updateError instanceof Error ? updateError.message : 'No fue posible actualizar el reporte.');
     } finally {
-      setIsUpdatingStatus(false);
+      requestInFlight.current = false;
+      if (mounted.current) setIsUpdatingStatus(false);
     }
   };
 
@@ -135,7 +153,7 @@ export default function ReportsScreen() {
       {!selected && <View style={styles.headerSummary}><Text style={styles.summaryValue}>{incidents.length}</Text><Text style={styles.summaryLabel}>{incidents.length === 1 ? 'caso visible' : 'casos visibles'} para este acceso</Text></View>}
     </View>
     {selected ? <>
-      <Pressable style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Volver a reportes</Text></Pressable>
+      <Pressable disabled={isUpdatingStatus} style={styles.backButton} onPress={() => setSelected(null)}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Volver a reportes</Text></Pressable>
       <IncidentCard incident={selected} />
       <View style={styles.detailCard}>
         <DetailRow label="Fecha de registro" value={selected.createdAt} />
@@ -143,7 +161,9 @@ export default function ReportsScreen() {
         <DetailRow label="Categoría" value={selected.category} />
         <DetailRow label="Ubicación" value={selected.location} />
         <DetailRow label="Prioridad:" value={formatPriority(selected.priority)} />
+        <DetailRow label="Departamento asignado" value={selected.department ?? 'Sin asignación disponible'} />
       </View>
+      {role !== 'citizen' && <View style={styles.managementCard}><Text style={styles.managementTitle}>Asignación y evidencia de atención</Text><Text style={styles.managementCopy}>{backendPendingMessage} Se conserva la consulta de asignaciones y el flujo actual de estados.</Text><AppButton label="Asignar responsable y prioridad · pendiente" disabled onPress={() => {}} /><AppButton label="Adjuntar evidencia de atención · pendiente" disabled onPress={() => {}} /></View>}
       {role !== 'citizen' && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
         {availableTransitions.length ? <>
@@ -158,9 +178,13 @@ export default function ReportsScreen() {
         </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
       </View>}
     </> : <>
+      <TextInput style={styles.noteInput} accessibilityLabel="Buscar reportes" value={search} onChangeText={setSearch} placeholder="Buscar por código, título, categoría o ubicación" placeholderTextColor={colors.muted} />
       <View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} accessibilityRole="button" accessibilityState={{ selected: selectedFilter.key === item.key }} onPress={() => setFilter(item.key)} style={[styles.filter, selectedFilter.key === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, selectedFilter.key === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
+      <Text style={styles.fieldLabel}>Prioridad</Text>
+      <View style={styles.filters}>{[{ key: 'TODAS', label: 'Todas' }, ...[1, 2, 3, 4].map((value) => ({ key: String(value), label: String(value) })), { key: 'DESCONOCIDA', label: 'No consultada' }, { key: 'INVALIDA', label: 'No disponible' }].map((item) => <Pressable key={item.key} accessibilityRole="button" accessibilityState={{ selected: priorityFilter === item.key }} onPress={() => setPriorityFilter(item.key)} style={[styles.filter, priorityFilter === item.key && { backgroundColor: visual.primary }]}><Text style={[styles.filterText, priorityFilter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View>
+      {(role === 'admin' || role === 'superadmin') && departmentOptions.length > 0 && <><Text style={styles.fieldLabel}>Departamento</Text><View style={styles.filters}>{['TODOS', ...departmentOptions].map((item) => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: departmentFilter === item }} onPress={() => setDepartmentFilter(item)} style={[styles.filter, departmentFilter === item && { backgroundColor: visual.primary }]}><Text style={[styles.filterText, departmentFilter === item && styles.filterTextActive]}>{item === 'TODOS' ? 'Todos' : item}</Text></Pressable>)}</View></>}
       {!isLoading && !error && <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>}
-      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title={selectedFilter.key === 'TODOS' ? 'No hay reportes disponibles' : `No hay reportes en «${selectedFilter.label}»`} description={selectedFilter.key === 'TODOS' ? 'No hay reportes disponibles para tu acceso.' : 'Selecciona otro filtro para consultar los reportes disponibles.'} />}
+      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <EmptyState title={selectedFilter.key === 'TODOS' ? 'No hay reportes con estos criterios' : `No hay reportes en «${selectedFilter.label}»`} description="Cambia la búsqueda o alguno de los filtros para consultar otros casos." />}
     </>}
   </ScrollView>;
 }

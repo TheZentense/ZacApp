@@ -15,6 +15,9 @@ export type Incident = {
   location: string;
   status: IncidentStatus;
   priority?: IncidentPriority | null;
+  departmentId?: number | null;
+  department?: string | null;
+  assignedToId?: string | null;
   createdAt: string;
   updatedAt: string;
 };

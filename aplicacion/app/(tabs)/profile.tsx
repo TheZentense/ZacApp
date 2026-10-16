@@ -1,10 +1,12 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { router } from 'expo-router';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { backendCapabilities, backendPendingMessage } from '@/lib/backendCapabilities';
 
 const profileContent = {
   citizen: { name: 'Ciudadano ZacApp', initials: 'CZ', role: 'Ciudadano', area: 'Cuenta ciudadana' },
@@ -15,14 +17,71 @@ const profileContent = {
 } as const;
 
 export default function ProfileScreen() {
-  const { role, email, fullName, department, signOut } = useSession();
+  const { role, email, fullName, phone, department, signOut, updatePassword, updateProfile, profileError: identityError } = useSession();
   const content = profileContent[role];
   const visual = roleVisuals[role];
   const isCitizen = role === 'citizen';
+  const [showSecurityForm, setShowSecurityForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [showProfileForm, setShowProfileForm] = useState(false);
+  const [profileName, setProfileName] = useState(fullName);
+  const [profilePhone, setProfilePhone] = useState(phone);
+  const [profileError, setProfileError] = useState('');
+  const [profileMessage, setProfileMessage] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  const submitProfile = async () => {
+    if (inFlight.current || !backendCapabilities.profileEditing) return;
+    setProfileError(''); setProfileMessage('');
+    const normalizedName = profileName.trim();
+    const normalizedPhone = profilePhone.trim();
+    if (normalizedName.length < 2) return setProfileError('Escribe un nombre de al menos 2 caracteres.');
+    if (normalizedPhone && !/^[0-9+() -]{8,20}$/.test(normalizedPhone)) return setProfileError('Escribe un teléfono válido de 8 a 20 caracteres.');
+    inFlight.current = true;
+    try {
+      setIsUpdatingProfile(true);
+      await updateProfile(normalizedName, normalizedPhone);
+      if (!mounted.current) return;
+      setProfileMessage('La información del perfil se actualizó correctamente.');
+      setShowProfileForm(false);
+    } catch {
+      if (mounted.current) setProfileError('No fue posible actualizar la información del perfil.');
+    } finally { inFlight.current = false; if (mounted.current) setIsUpdatingProfile(false); }
+  };
+
+  const submitPassword = async () => {
+    if (inFlight.current) return;
+    setPasswordError(''); setPasswordMessage('');
+    if (!currentPassword || !newPassword || !confirmPassword) return setPasswordError('Completa los tres campos de contraseña.');
+    if (newPassword.length < 8) return setPasswordError('La contraseña nueva debe tener al menos 8 caracteres.');
+    if (newPassword !== confirmPassword) return setPasswordError('La confirmación no coincide con la contraseña nueva.');
+    if (currentPassword === newPassword) return setPasswordError('La contraseña nueva debe ser diferente de la actual.');
+    inFlight.current = true;
+    try {
+      setIsUpdatingPassword(true);
+      await updatePassword(currentPassword, newPassword);
+      if (!mounted.current) return;
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      setPasswordMessage('La contraseña se actualizó correctamente.');
+      setShowSecurityForm(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (mounted.current) setPasswordError(message.includes('password') ? 'La contraseña actual no es correcta o la nueva no cumple los requisitos.' : 'No fue posible actualizar la contraseña.');
+    } finally { inFlight.current = false; if (mounted.current) setIsUpdatingPassword(false); }
+  };
 
   return (
     <ScrollView style={[styles.page, { backgroundColor: visual.background }]} contentContainerStyle={styles.pageContent}>
       <View style={styles.content}>
+        {identityError ? <View style={styles.errorBox}><Text style={styles.errorText}>{identityError}</Text></View> : null}
         <View style={[styles.profileHeader, { backgroundColor: visual.primary }]}>
           <View style={[styles.avatar, { backgroundColor: visual.accent }]}><Text style={[styles.initials, { color: visual.primary }]}>{content.initials}</Text></View>
           <View style={styles.identity}>
@@ -36,13 +95,34 @@ export default function ProfileScreen() {
         <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>IDENTIDAD DIGITAL</Text><Text style={styles.sectionTitle}>Información de la cuenta</Text></View>
         <View style={styles.card}>
           <InfoRow icon="mail-outline" label="Correo" value={email} />
+          <InfoRow icon="call-outline" label="Teléfono" value={phone || 'Pendiente de habilitación'} />
           <InfoRow icon="location-outline" label="Municipio" value="Zacapa" />
           <InfoRow icon="business-outline" label={isCitizen ? 'Acceso' : 'Área'} value={isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
           <InfoRow icon="key-outline" label="Rol actual" value={content.role} />
         </View>
 
-        <View style={styles.securityCard}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Sesión protegida</Text><Text style={styles.securityCopy}>Tu acceso está conectado a la autenticación segura de ZacApp.</Text></View></View>
-        <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={async () => { await signOut(); router.replace('/login'); }} />
+        <Pressable style={styles.securityCard} onPress={() => { setShowProfileForm((value) => !value); setProfileName(fullName); setProfilePhone(phone); setProfileError(''); setProfileMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="create-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Editar información</Text><Text style={styles.securityCopy}>Actualiza el nombre y teléfono asociados a tu cuenta.</Text></View><Ionicons name={showProfileForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {showProfileForm && <View style={styles.passwordCard}>
+          {!backendCapabilities.profileEditing && <Text style={styles.securityCopy}>{backendPendingMessage}</Text>}
+          <Text style={styles.passwordTitle}>Información personal</Text>
+          <Text style={styles.label}>Nombre completo</Text><TextInput value={profileName} onChangeText={setProfileName} maxLength={100} autoCapitalize="words" placeholder="Nombre completo" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingProfile} />
+          <Text style={styles.label}>Teléfono</Text><TextInput value={profilePhone} onChangeText={setProfilePhone} maxLength={20} keyboardType="phone-pad" placeholder="Ej. 5555 5555" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingProfile} />
+          {profileError ? <View style={styles.errorBox}><Text style={styles.errorText}>{profileError}</Text></View> : null}
+          <AppButton label={backendCapabilities.profileEditing ? 'Guardar información' : 'Edición pendiente de habilitación'} icon="save-outline" disabled={isUpdatingProfile || !backendCapabilities.profileEditing} onPress={submitProfile} />
+        </View>}
+        {profileMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{profileMessage}</Text></View> : null}
+
+        <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>Cambia tu contraseña verificando primero la actual.</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {showSecurityForm && <View style={styles.passwordCard}>
+          <Text style={styles.passwordTitle}>Cambiar contraseña</Text>
+          <Text style={styles.label}>Contraseña actual</Text><TextInput value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Contraseña actual" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          <Text style={styles.label}>Contraseña nueva</Text><TextInput value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="Mínimo 8 caracteres" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          <Text style={styles.label}>Confirmar contraseña nueva</Text><TextInput value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Repite la contraseña nueva" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
+          {passwordError ? <View style={styles.errorBox}><Text style={styles.errorText}>{passwordError}</Text></View> : null}
+          <AppButton label={isUpdatingPassword ? 'Actualizando...' : 'Actualizar contraseña'} icon="key-outline" disabled={isUpdatingPassword} onPress={submitPassword} />
+        </View>}
+        {passwordMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{passwordMessage}</Text></View> : null}
+        <AppButton label="Cerrar sesión" disabled={isUpdatingPassword || isUpdatingProfile} variant="secondary" icon="log-out-outline" onPress={async () => { await signOut(); router.replace('/login'); }} />
       </View>
     </ScrollView>
   );
@@ -83,5 +163,12 @@ const styles = StyleSheet.create({
   securityIcon: { width: 46, height: 46, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   securityText: { flex: 1 },
   securityTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
-  securityCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 }
+  securityCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  passwordCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.sm },
+  passwordTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: spacing.xs },
+  input: { minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, backgroundColor: colors.surface, color: colors.text, fontSize: 15 },
+  errorBox: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md },
+  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  successBox: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  successText: { flex: 1, color: colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' }
 });

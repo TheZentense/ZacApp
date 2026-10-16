@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -9,7 +9,7 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
-import { listReportHistory, type ReportHistoryEntry } from '@/services/reports';
+import { listReportEvidence, listReportHistory, type ReportEvidence, type ReportHistoryEntry } from '@/services/reports';
 
 const historyStatusLabels: Record<Incident['status'], string> = {
   REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
@@ -43,6 +43,10 @@ export default function TrackingScreen() {
   const [history, setHistory] = useState<ReportHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [evidence, setEvidence] = useState<ReportEvidence[]>([]);
+  const [evidenceError, setEvidenceError] = useState('');
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [revision, setRevision] = useState(0);
   const categories = useMemo(() => ['Todas', ...new Set(availableIncidents.map((item) => item.category))], [availableIncidents]);
   const incidents = useMemo(() => availableIncidents.filter((item) => category === 'Todas' || item.category === category), [availableIncidents, category]);
 
@@ -54,17 +58,25 @@ export default function TrackingScreen() {
     if (!selected) return;
 
     let active = true;
-    listReportHistory(selected.id)
-      .then((entries) => { if (active) setHistory(entries); })
-      .catch((historyLoadError) => { if (active) setHistoryError(historyLoadError instanceof Error ? historyLoadError.message : 'No fue posible consultar el historial.'); })
-      .finally(() => { if (active) setHistoryLoading(false); });
+    Promise.allSettled([listReportHistory(selected.id), listReportEvidence(selected.id)]).then(([historyResult, evidenceResult]) => {
+      if (!active) return;
+      if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
+      else { setHistory([]); setHistoryError('No fue posible consultar el historial.'); }
+      if (evidenceResult.status === 'fulfilled') setEvidence(evidenceResult.value);
+      else { setEvidence([]); setEvidenceError('No fue posible abrir las fotografías. Intenta actualizar la consulta.'); }
+      setHistoryLoading(false);
+      setEvidenceLoading(false);
+    });
     return () => { active = false; };
-  }, [selected]);
+  }, [selected, revision]);
 
   const selectIncident = (incident: Incident) => {
     setHistory([]);
     setHistoryError('');
     setHistoryLoading(true);
+    setEvidence([]);
+    setEvidenceError('');
+    setEvidenceLoading(true);
     setSelected(incident);
   };
 
@@ -73,6 +85,9 @@ export default function TrackingScreen() {
     setHistory([]);
     setHistoryError('');
     setHistoryLoading(false);
+    setEvidence([]);
+    setEvidenceError('');
+    setEvidenceLoading(false);
   };
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
@@ -91,6 +106,11 @@ export default function TrackingScreen() {
         const done = index < completedSteps;
         return <View key={step.title} style={styles.step}><View style={[styles.stepIcon, { backgroundColor: done ? visual.primary : `${visual.accent}22` }]}>{done ? <Ionicons name="checkmark" size={18} color={colors.white} /> : <Text style={[styles.stepNumber, { color: visual.primary }]}>{index + 1}</Text>}</View><View style={styles.stepContent}><Text style={styles.stepTitle}>{step.title}</Text><Text style={styles.stepDetail}>{step.detail}</Text>{index < steps.length - 1 && <View style={[styles.stepLine, { backgroundColor: done ? `${visual.primary}55` : colors.border }]} />}</View></View>;
       })}</View>
+      <View style={styles.historyCard}>
+        <Text style={styles.historyTitle}>Evidencia fotográfica</Text>
+        {evidenceLoading ? <ActivityIndicator color={visual.primary} /> : evidenceError ? <Text style={styles.historyErrorText}>{evidenceError}</Text> : evidence.length ? <ScrollView horizontal contentContainerStyle={styles.filters}>{evidence.map((item) => <View key={item.id}><Image accessibilityLabel="Fotografía del reporte seleccionado" source={{ uri: item.url }} style={{ width: 280, height: 190, borderRadius: radius.md }} /><Text style={styles.historyMeta}>{item.createdAt}</Text></View>)}</ScrollView> : <Text style={styles.historyMuted}>Este reporte no tiene fotografías disponibles.</Text>}
+        <Pressable accessibilityRole="button" onPress={() => { setHistoryLoading(true); setEvidenceLoading(true); setHistoryError(''); setEvidenceError(''); setRevision((value) => value + 1); }}><Text style={styles.backText}>Actualizar historial y fotografías</Text></Pressable>
+      </View>
       <View style={styles.historyCard}>
         <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>TRAZABILIDAD REAL</Text><Text style={styles.historyTitle}>Historial del reporte</Text></View><Ionicons name="time-outline" size={23} color={visual.primary} /></View>
         {historyLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Consultando movimientos...</Text></View> : historyError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{historyError}</Text></View> : <View style={styles.historyList}>
