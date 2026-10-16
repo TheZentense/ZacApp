@@ -39,6 +39,12 @@
           "cameraPermission": "Permitir que ZacApp acceda a la cámara para adjuntar evidencia a los reportes.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permitir que ZacApp acceda a tu ubicación para registrar el punto exacto del incidente."
+        }
       ]
     ],
     "experiments": {

@@ -3,11 +3,15 @@ import { isIncidentPriority, type Incident, type IncidentPriority, type Incident
 import { readEvidenceBytes } from '@/services/evidenceImages';
 import { requireBackendCapability } from '@/lib/backendCapabilities';
 import { personalTasksPendingMessage, reportReadScopeFor } from '@/services/sessionPolicy';
+import * as Crypto from 'expo-crypto';
 
 type CreateReportInput = {
-  categoryName: string;
+  categoryId: number;
   description: string;
   location: string;
+  latitude: number;
+  longitude: number;
+  evidence: ReportEvidenceInput;
 };
 
 export type ReportEvidenceInput = {
@@ -41,6 +45,59 @@ export type ReportEvidence = {
   createdAt: string;
 };
 
+type CategoryStorageRow = {
+  id: number;
+  department: { code?: string } | { code?: string }[] | null;
+};
+
+function relationValue<T>(value: T | T[] | null): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+function storageSegment(value: string) {
+  const normalized = value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '-');
+  if (!normalized) throw new Error('El sector del reporte no tiene un código válido.');
+  return normalized;
+}
+
+function guatemalaYearMonth() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Guatemala',
+    year: 'numeric',
+    month: '2-digit'
+  }).formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  if (!year || !month) throw new Error('No fue posible determinar la fecha de la evidencia.');
+  return { year, month };
+}
+
+async function categoryStorageCode(categoryId: number) {
+  if (!supabase) throw new Error('Supabase no está configurado.');
+  const { data, error } = await supabase
+    .from('categories')
+    .select('id, department:departments(code)')
+    .eq('id', categoryId)
+    .eq('active', true)
+    .single();
+  if (error || !data) throw new Error('La categoría seleccionada no está disponible.');
+  const row = data as CategoryStorageRow;
+  const department = relationValue(row.department);
+  return storageSegment(department?.code ?? '');
+}
+
+function evidenceStoragePath(input: {
+  departmentCode: string;
+  categoryId: number;
+  incidentId: string;
+  userId: string;
+  actor: 'ciudadano' | 'personal';
+  filename: string;
+}) {
+  const { year, month } = guatemalaYearMonth();
+  return `reportes/${input.departmentCode}/categoria-${input.categoryId}/${year}/${month}/${input.incidentId}/${input.actor}-${input.userId}/${input.filename}`;
+}
+
 export async function listReportCategories(): Promise<ReportCategory[]> {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
@@ -54,36 +111,51 @@ export async function listReportCategories(): Promise<ReportCategory[]> {
   return data ?? [];
 }
 
-export async function createReport({ categoryName, description, location }: CreateReportInput) {
+export async function createReport({ categoryId, description, location, latitude, longitude, evidence }: CreateReportInput) {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error('Inicia sesión para registrar un reporte.');
+  if (evidence.mimeType !== 'image/jpeg') throw new Error('Selecciona una fotografía JPEG.');
 
-  const { data: category, error: categoryError } = await supabase
-    .from('categories')
-    .select('id')
-    .eq('name', categoryName.trim())
-    .eq('active', true)
-    .single();
+  const incidentId = Crypto.randomUUID();
+  const departmentCode = await categoryStorageCode(categoryId);
+  const fileData = await readEvidenceBytes(evidence.uri);
+  const storagePath = evidenceStoragePath({
+    departmentCode,
+    categoryId,
+    incidentId,
+    userId: authData.user.id,
+    actor: 'ciudadano',
+    filename: 'evidencia-inicial.jpg'
+  });
+  const { error: uploadError } = await supabase.storage
+    .from('incidente-evidencia')
+    .upload(storagePath, fileData, {
+      contentType: evidence.mimeType,
+      cacheControl: '3600',
+      upsert: false
+    });
 
-  if (categoryError || !category) throw new Error('La categoría seleccionada no está disponible.');
+  if (uploadError) throw uploadError;
 
-  const cleanDescription = description.trim();
-  const { data: incident, error: incidentError } = await supabase
-    .from('incidents')
-    .insert({
-      citizen_id: authData.user.id,
-      category_id: category.id,
-      title: cleanDescription.slice(0, 80),
-      description: cleanDescription,
-      address_reference: location.trim()
-    })
-    .select('id, code')
-    .single();
+  const { data, error } = await supabase.rpc('create_incident_with_evidence', {
+    p_incident_id: incidentId,
+    p_category_id: categoryId,
+    p_description: description.trim(),
+    p_address_reference: location.trim(),
+    p_latitude: latitude,
+    p_longitude: longitude,
+    p_storage_path: storagePath,
+    p_mime_type: evidence.mimeType
+  });
 
-  if (incidentError) throw incidentError;
-  return incident;
+  if (error || !data?.[0]) {
+    await supabase.storage.from('incidente-evidencia').remove([storagePath]);
+    throw new Error(error?.message ?? 'No fue posible registrar el reporte con su evidencia.');
+  }
+
+  return data[0] as { id: string; code: string };
 }
 
 export async function uploadReportEvidence(incidentId: string, evidence: ReportEvidenceInput) {
@@ -94,7 +166,7 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
 
   const { data: incident, error: incidentError } = await supabase
     .from('incidents')
-    .select('id, citizen_id')
+    .select('id, citizen_id, category_id, category:categories(department:departments(code))')
     .eq('id', incidentId)
     .single();
   if (incidentError || !incident) throw new Error('El reporte no está disponible para esta sesión.');
@@ -102,7 +174,16 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
 
   if (evidence.mimeType !== 'image/jpeg') throw new Error('Selecciona una fotografía JPEG.');
   const fileData = await readEvidenceBytes(evidence.uri);
-  const storagePath = `${authData.user.id}/${incidentId}/${Date.now()}.jpg`;
+  const category = relationValue(incident.category as { department: { code?: string } | { code?: string }[] | null } | { department: { code?: string } | { code?: string }[] | null }[] | null);
+  const department = relationValue(category?.department ?? null);
+  const storagePath = evidenceStoragePath({
+    departmentCode: storageSegment(department?.code ?? ''),
+    categoryId: incident.category_id,
+    incidentId,
+    userId: authData.user.id,
+    actor: incident.citizen_id === authData.user.id ? 'ciudadano' : 'personal',
+    filename: `evidencia-${Date.now()}-${Crypto.randomUUID()}.jpg`
+  });
 
   const { error: uploadError } = await supabase.storage
     .from('incidente-evidencia')
@@ -118,11 +199,15 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
     incident_id: incidentId,
     uploaded_by: authData.user.id,
     storage_path: storagePath,
-    mime_type: evidence.mimeType
+    mime_type: evidence.mimeType,
+    file_url: storagePath,
+    file_type: evidence.mimeType,
+    evidence_kind: incident.citizen_id === authData.user.id ? 'OTRA' : 'AVANCE'
   });
 
   if (evidenceError) {
-    throw new EvidenceLinkError('La fotografía se subió, pero no pudo vincularse al reporte. Conserva el reporte y solicita una revisión antes de reintentar.');
+    await supabase.storage.from('incidente-evidencia').remove([storagePath]);
+    throw new EvidenceLinkError('La fotografía no pudo vincularse al reporte y se retiró del almacenamiento para evitar archivos huérfanos.');
   }
 
   return storagePath;
@@ -134,6 +219,10 @@ type IncidentRow = {
   title: string;
   description: string;
   address_reference: string;
+  latitude: number | null;
+  longitude: number | null;
+  reporter_name: string | null;
+  reporter_email: string | null;
   status: IncidentStatus;
   created_at: string;
   updated_at: string;
@@ -218,7 +307,7 @@ export async function listReports(): Promise<Incident[]> {
   const { client, scope, userId, departmentId } = await requireReportReadAccess();
   let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)');
+    .select('id, code, title, description, address_reference, latitude, longitude, reporter_name, reporter_email, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
   const { data, error } = await query.order('created_at', { ascending: false });
@@ -237,8 +326,10 @@ export async function listReports(): Promise<Incident[]> {
       status: incident.status,
       createdAt: formatDate(incident.created_at),
       updatedAt: formatDate(incident.updated_at),
-      citizenName: 'Ciudadanía',
-      citizenEmail: '',
+      citizenName: incident.reporter_name ?? 'Ciudadanía',
+      citizenEmail: incident.reporter_email ?? '',
+      latitude: incident.latitude,
+      longitude: incident.longitude,
       department: departmentForCategory(category),
       departmentId: incident.assigned_department_id,
       assignedToId: incident.assigned_to,

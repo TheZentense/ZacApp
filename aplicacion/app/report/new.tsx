@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { ErrorState, LoadingState } from '@/components/DataState';
@@ -30,7 +31,7 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
 }
 
 export default function NewReportScreen() {
-  const { role, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
+  const { role, email, fullName, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
   const mountedRef = useRef(true);
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
   const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
@@ -38,6 +39,8 @@ export default function NewReportScreen() {
   const [categoriesError, setCategoriesError] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number; accuracy: number | null } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -51,6 +54,29 @@ export default function NewReportScreen() {
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const createdIncidentRef = useRef<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+
+  const captureLocation = async () => {
+    if (isLocating || requestInFlight.current) return;
+    setIsLocating(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permiso requerido', 'Permite el acceso a la ubicación para registrar el punto exacto del incidente.');
+        return;
+      }
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (!mountedRef.current) return;
+      setCoordinates({
+        latitude: current.coords.latitude,
+        longitude: current.coords.longitude,
+        accuracy: current.coords.accuracy
+      });
+    } catch {
+      if (mountedRef.current) Alert.alert('No fue posible obtener la ubicación', 'Activa el GPS y vuelve a intentarlo en un lugar con mejor señal.');
+    } finally {
+      if (mountedRef.current) setIsLocating(false);
+    }
+  };
 
   const applyCategories = (availableCategories: ReportCategory[]) => {
     setCategories(availableCategories);
@@ -150,24 +176,28 @@ export default function NewReportScreen() {
 
   const submit = async () => {
     if (requestInFlight.current || imageInFlight.current || createdIncidentRef.current) return;
-    if (!category || !description.trim() || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega la descripción y ubicación.');
+    const selectedCategory = categories.find((item) => item.name === category);
+    if (!fullName.trim() || !email.trim()) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
+    if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
+    if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
+    if (!evidence) return Alert.alert('Fotografía requerida', 'Toma o selecciona una fotografía del incidente antes de enviar.');
     requestInFlight.current = true;
     setIsSubmitting(true);
     try {
-      const incident = await createReport({ categoryName: category, description, location });
+      const incident = await createReport({
+        categoryId: selectedCategory.id,
+        description,
+        location,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        evidence
+      });
       // Keep the identifier immediately, including for already queued submit handlers.
       createdIncidentRef.current = incident;
       if (mountedRef.current) setCreatedIncident(incident);
-      if (evidence) {
-        try {
-          await uploadReportEvidence(incident.id, evidence);
-          if (mountedRef.current) setEvidenceUploadError('');
-        } catch (error) {
-          if (mountedRef.current) { setEvidenceUploadError(error instanceof Error ? error.message : 'La fotografía quedó pendiente.'); setCanRetryEvidence(!(error instanceof EvidenceLinkError)); }
-        }
-      }
-    } catch {
-      if (mountedRef.current) Alert.alert('No fue posible registrar el reporte', 'Revisa los datos y la conexión antes de intentar nuevamente.');
+      if (mountedRef.current) setEvidenceUploadError('');
+    } catch (error) {
+      if (mountedRef.current) Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Revisa los datos y la conexión antes de intentar nuevamente.');
     } finally { requestInFlight.current = false; if (mountedRef.current) setIsSubmitting(false); }
   };
 
@@ -193,6 +223,7 @@ export default function NewReportScreen() {
         <View style={styles.confirmationSummary}>
           <View style={styles.summaryRow}><Ionicons name="apps-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Categoría</Text><Text style={styles.summaryValue}>{category}</Text></View></View>
           <View style={styles.summaryRow}><Ionicons name="location-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Ubicación</Text><Text style={styles.summaryValue}>{location}</Text></View></View>
+          {coordinates && <View style={styles.summaryRow}><Ionicons name="navigate-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Coordenadas GPS</Text><Text style={styles.summaryValue}>{coordinates.latitude.toFixed(6)}, {coordinates.longitude.toFixed(6)}</Text></View></View>}
           <View style={styles.summaryRow}><Ionicons name="time-outline" size={19} color={colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Estado inicial</Text><Text style={styles.summaryValue}>Registrado</Text></View></View>
           {evidence && <View style={styles.summaryRow}><Ionicons name={evidenceUploadError ? 'alert-circle-outline' : 'image-outline'} size={19} color={evidenceUploadError ? colors.danger : colors.secondary} /><View style={styles.summaryText}><Text style={styles.summaryLabel}>Evidencia</Text><Text style={[styles.summaryValue, evidenceUploadError && styles.evidenceErrorText]}>{isSubmitting ? 'Adjuntando fotografía...' : evidenceUploadError ? 'Pendiente de subir' : 'Fotografía adjunta'}</Text></View></View>}
         </View>
@@ -223,14 +254,22 @@ export default function NewReportScreen() {
       </View>
 
       <View style={styles.form}>
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View><Text style={styles.sectionTitle}>Tipo de incidencia</Text><Text style={styles.sectionCopy}>Selecciona la categoría que mejor corresponda.</Text></View></View>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View><Text style={styles.sectionTitle}>Datos del ciudadano</Text><Text style={styles.sectionCopy}>Se obtienen de la cuenta con la sesión iniciada.</Text></View></View>
+        <View style={styles.identityCard}>
+          <View style={styles.identityIcon}><Ionicons name="person-outline" size={22} color={colors.white} /></View>
+          <View style={styles.identityText}><Text style={styles.identityName}>{fullName || 'Nombre pendiente'}</Text><Text style={styles.identityEmail}>{email || 'Correo pendiente'}</Text></View>
+          <Ionicons name={fullName && email ? 'checkmark-circle' : 'alert-circle'} size={22} color={fullName && email ? colors.secondary : colors.danger} />
+        </View>
+
+        <View style={styles.divider} />
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View><View><Text style={styles.sectionTitle}>Tipo de incidencia</Text><Text style={styles.sectionCopy}>Selecciona la categoría que mejor corresponda.</Text></View></View>
         {categoriesLoading ? <LoadingState label="Consultando categorías..." /> : categoriesError ? <ErrorState description={categoriesError} onRetry={loadCategories} /> : categories.length ? <View style={styles.categories}>{categories.map((item) => {
           const selected = category === item.name;
           return <Pressable key={item.id} disabled={isSubmitting} onPress={() => setCategory(item.name)} style={[styles.category, selected && styles.categorySelected]}><Ionicons name={categoryIcon(item.name)} size={21} color={selected ? colors.white : colors.primary} /><Text style={[styles.categoryText, selected && styles.categoryTextSelected]}>{item.name}</Text>{selected && <Ionicons name="checkmark-circle" size={18} color={colors.accent} />}</Pressable>;
         })}</View> : <ErrorState description="No hay categorías disponibles para registrar reportes." onRetry={loadCategories} />}
 
         <View style={styles.divider} />
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View><View><Text style={styles.sectionTitle}>Información del caso</Text><Text style={styles.sectionCopy}>Describe el problema y dónde se encuentra.</Text></View></View>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>03</Text></View><View><Text style={styles.sectionTitle}>Información y ubicación</Text><Text style={styles.sectionCopy}>Describe el problema y registra el punto exacto.</Text></View></View>
         <View style={styles.labelRow}><Text style={styles.label}>Descripción</Text><Text style={styles.counter}>{description.length}/500</Text></View>
         <TextInput
           style={[styles.input, styles.multiline]}
@@ -246,8 +285,17 @@ export default function NewReportScreen() {
         <Text style={styles.label}>Ubicación o referencia</Text>
         <View style={styles.inputWithIcon}><Ionicons name="location-outline" size={20} color={colors.secondary} /><TextInput style={styles.inlineInput} value={location} editable={!isSubmitting} onChangeText={setLocation} placeholder="Barrio, calle o punto de referencia" placeholderTextColor={colors.muted} /></View>
 
+        <Pressable style={[styles.locationCard, coordinates && styles.locationCardReady]} disabled={isSubmitting || isLocating} onPress={captureLocation}>
+          <View style={[styles.locationIcon, coordinates && styles.locationIconReady]}><Ionicons name={coordinates ? 'checkmark' : 'navigate-outline'} size={22} color={colors.white} /></View>
+          <View style={styles.locationText}>
+            <Text style={styles.locationTitle}>{coordinates ? 'Ubicación GPS registrada' : 'Obtener ubicación GPS'}</Text>
+            <Text style={styles.locationCopy}>{isLocating ? 'Buscando señal...' : coordinates ? `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}${coordinates.accuracy ? ` · precisión aproximada ${Math.round(coordinates.accuracy)} m` : ''}` : 'Es obligatoria y se solicitará permiso al dispositivo.'}</Text>
+          </View>
+          <Ionicons name={coordinates ? 'refresh-outline' : 'arrow-forward'} size={19} color={colors.primary} />
+        </Pressable>
+
         <View style={styles.divider} />
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>03</Text></View><View><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Una fotografía puede facilitar la validación.</Text></View></View>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Se requiere una fotografía para validar el reporte.</Text></View></View>
         {evidence ? (
           <View style={styles.evidenceCard}>
             <Image source={{ uri: evidence.uri }} style={styles.evidencePreview} />
@@ -264,7 +312,7 @@ export default function NewReportScreen() {
           </View>
         )}
 
-        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>El reporte quedará asociado únicamente a tu cuenta.</Text></View><AppButton disabled={isSubmitting || isCapturing || categoriesLoading || !category} label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
+        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografía y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || !evidence || !fullName || !email} label={isSubmitting ? 'Registrando...' : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
 
@@ -323,6 +371,11 @@ const styles = StyleSheet.create({
   sectionTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   sectionCopy: { color: colors.muted, fontSize: 12, marginTop: 2 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
+  identityCard: { minHeight: 72, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  identityIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  identityText: { flex: 1 },
+  identityName: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  identityEmail: { color: colors.muted, fontSize: 12, marginTop: 3 },
   categories: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   category: { minHeight: 48, flexGrow: 1, flexBasis: 190, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   categorySelected: { backgroundColor: colors.primary, borderColor: colors.primary },
@@ -335,6 +388,13 @@ const styles = StyleSheet.create({
   inputWithIcon: { minHeight: 52, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   inlineInput: { flex: 1, minHeight: 50, fontSize: 16, color: colors.text },
   multiline: { minHeight: 120, textAlignVertical: 'top' },
+  locationCard: { minHeight: 82, marginTop: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  locationCardReady: { borderColor: colors.secondary, backgroundColor: '#F2F7EE' },
+  locationIcon: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  locationIconReady: { backgroundColor: colors.secondary },
+  locationText: { flex: 1 },
+  locationTitle: { color: colors.primary, fontSize: 15, fontWeight: '800' },
+  locationCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
   cameraButton: { minHeight: 82, backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cameraIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   cameraButtonText: { flex: 1 },

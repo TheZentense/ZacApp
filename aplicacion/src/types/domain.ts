@@ -28,6 +28,8 @@ export type Incident = {
   updatedAt: string;
   citizenName: string;
   citizenEmail: string;
+  latitude?: number | null;
+  longitude?: number | null;
   department: MaintenanceDepartment;
   departmentId?: number | null;
   assignedToId?: string | null;

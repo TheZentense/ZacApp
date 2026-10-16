@@ -196,6 +196,9 @@ export default function ReportsScreen() {
         <DetailRow label="Prioridad" value={selected.priority} />
         <DetailRow label="Departamento" value={selected.department} />
         <DetailRow label="Ubicación" value={selected.location} />
+        {selected.latitude != null && selected.longitude != null ? <DetailRow label="Coordenadas GPS" value={`${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}`} /> : null}
+        {databaseRole === 'administrador' ? <DetailRow label="Ciudadano" value={selected.citizenName} /> : null}
+        {databaseRole === 'administrador' && selected.citizenEmail ? <DetailRow label="Correo" value={selected.citizenEmail} /> : null}
       </View>
       {canManageAssignment && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="people-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Asignación operativa</Text><Text style={styles.managementCopy}>Define la urgencia, el área responsable y, si corresponde, una persona encargada.</Text></View></View>
