@@ -1,6 +1,6 @@
 {
   "name": "zacapp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -8,11 +8,14 @@
     "tunnel": "expo start --tunnel",
     "android": "expo start --android",
     "web": "expo start --web",
+    "update:preview": "eas update --channel preview --environment preview",
+    "update:production": "eas update --channel production --environment production",
     "typecheck": "tsc --noEmit",
     "lint": "expo lint"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@maplibre/maplibre-react-native": "^11.5.0",
     "@react-native-async-storage/async-storage": "^2.1.0",
     "@supabase/supabase-js": "^2.57.0",
     "expo": "~57.0.30",

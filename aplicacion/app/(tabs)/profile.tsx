@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
@@ -16,6 +16,8 @@ const profileContent = {
 } as const;
 
 export default function ProfileScreen() {
+  const { width } = useWindowDimensions();
+  const isCompact = width < 480;
   const { role, email, fullName, phone, department, signOut, updatePassword, updateProfile } = useSession();
   const content = profileContent[role];
   const visual = roleVisuals[role];
@@ -71,8 +73,8 @@ export default function ProfileScreen() {
   return (
     <ScrollView style={[styles.page, { backgroundColor: visual.background }]} contentContainerStyle={styles.pageContent}>
       <View style={styles.content}>
-        <View style={[styles.profileHeader, { backgroundColor: visual.primary }]}>
-          <View style={[styles.avatar, { backgroundColor: visual.accent }]}><Text style={[styles.initials, { color: visual.primary }]}>{content.initials}</Text></View>
+        <View style={[styles.profileHeader, isCompact && styles.profileHeaderCompact, { backgroundColor: visual.primary }]}>
+          <View style={[styles.avatar, isCompact && styles.avatarCompact, { backgroundColor: visual.accent }]}><Text style={[styles.initials, isCompact && styles.initialsCompact, { color: visual.primary }]}>{content.initials}</Text></View>
           <View style={styles.identity}>
             <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · CUENTA</Text>
             <Text style={styles.name}>{fullName || content.name}</Text>
@@ -130,12 +132,15 @@ const styles = StyleSheet.create({
   pageContent: { padding: spacing.lg },
   content: { width: '100%', maxWidth: 720, alignSelf: 'center', gap: spacing.md },
   profileHeader: { backgroundColor: colors.primary, borderRadius: 28, padding: spacing.xl, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg, alignItems: 'center' },
+  profileHeaderCompact: { padding: spacing.lg, flexDirection: 'column', alignItems: 'flex-start', gap: spacing.md },
   avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  avatarCompact: { width: 64, height: 64, borderRadius: 32 },
   initials: { fontSize: 28, fontWeight: '800', color: colors.primary },
-  identity: { flex: 1 },
+  initialsCompact: { fontSize: 22 },
+  identity: { flex: 1, minWidth: 190, width: '100%' },
   eyebrow: { fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginBottom: spacing.xs },
-  name: { fontSize: 24, fontWeight: '800', color: colors.white },
-  role: { color: '#DDE8D7', marginTop: spacing.xs },
+  name: { fontSize: 24, lineHeight: 31, fontWeight: '800', color: colors.white, flexShrink: 1 },
+  role: { color: '#DDE8D7', lineHeight: 20, marginTop: spacing.xs, flexShrink: 1 },
   verified: { borderRadius: radius.pill, backgroundColor: 'rgba(255,255,255,0.10)', paddingHorizontal: spacing.md, minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   verifiedText: { color: colors.white, fontSize: 12, fontWeight: '800' },
   sectionHeading: { marginTop: spacing.sm },
