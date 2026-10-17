@@ -416,6 +416,27 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
   });
 }
 
+function isEvidenceStoragePath(value: unknown, incidentId: string, uploadedBy: unknown): value is string {
+  if (typeof value !== 'string' || typeof uploadedBy !== 'string' || !uploadedBy) return false;
+  const parts = value.split('/');
+  // Storage keys are literal: never decode or normalize potentially unsafe segments.
+  if (parts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === '.' || part === '..')) return false;
+
+  if (parts.length === 3) return parts[0] === uploadedBy && parts[1] === incidentId;
+
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  return parts.length === 8
+    && parts[0] === 'reportes'
+    && /^[A-Z0-9_-]+$/.test(parts[1])
+    && /^categoria-[1-9][0-9]*$/.test(parts[2])
+    && /^[0-9]{4}$/.test(parts[3]) && parts[3] !== '0000'
+    && /^(0[1-9]|1[0-2])$/.test(parts[4])
+    && uuid.test(parts[5]) && parts[5] === incidentId
+    && uuid.test(uploadedBy)
+    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
+    && /^[A-Za-z0-9._-]+\.jpg$/.test(parts[7]);
+}
+
 export async function listReportEvidence(incidentId: string): Promise<ReportEvidence[]> {
   const client = await requireVisibleReport(incidentId);
 
@@ -427,12 +448,15 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
 
   if (error) throw error;
 
-  return Promise.all((data ?? []).map(async (item) => {
-    const storedValue = item.storage_path as string;
-    const parts = typeof storedValue === 'string' ? storedValue.split('/') : [];
-    if (parts.length !== 3 || parts[0] !== item.uploaded_by || parts[1] !== incidentId || !parts[2] || parts.some((part) => part === '.' || part === '..')) {
+  const evidence = data ?? [];
+  for (const item of evidence) {
+    if (!isEvidenceStoragePath(item.storage_path, incidentId, item.uploaded_by)) {
       throw new Error('La ruta de evidencia necesita revisión.');
     }
+  }
+
+  return Promise.all(evidence.map(async (item) => {
+    const storedValue = item.storage_path as string;
     const { data: signedData, error: signedError } = await client.storage
       .from('incidente-evidencia')
       .createSignedUrl(storedValue, 15 * 60);
