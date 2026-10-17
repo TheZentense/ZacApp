@@ -5,7 +5,7 @@ import { mockIncidents } from '@/data/mockIncidents';
 import { listReports } from '@/services/reports';
 import type { Incident } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
-import { personalTasksPendingMessage, reportReadScopeFor } from '@/services/sessionPolicy';
+import { reportReadScopeFor } from '@/services/sessionPolicy';
 
 export function useReports() {
   const { userId, databaseRole, departmentId, isAuthenticated } = useSession();
@@ -21,8 +21,8 @@ export function useReports() {
     if (!focused.current) return;
     const version = ++requestVersion.current;
     const current = () => focused.current && version === requestVersion.current;
-    if (databaseRole === 'operador' || (isSupabaseConfigured && databaseRole && reportReadScopeFor(databaseRole) === 'pending')) {
-      setIncidents([]); setIsLoading(false); setError(personalTasksPendingMessage); return;
+    if (isSupabaseConfigured && databaseRole && reportReadScopeFor(databaseRole) === 'pending') {
+      setIncidents([]); setIsLoading(false); setError('Esta cuenta todavía no tiene una consulta de reportes habilitada.'); return;
     }
     if (!isSupabaseConfigured) {
       setIncidents(mockIncidents);
@@ -50,6 +50,6 @@ export function useReports() {
     return () => { focused.current = false; ++requestVersion.current; };
   }, [loadReports]));
 
-  const readable = databaseRole !== 'operador' && (!isSupabaseConfigured || (resultOwner === identityKey && reportReadScopeFor(databaseRole) !== 'pending'));
+  const readable = !isSupabaseConfigured || (resultOwner === identityKey && reportReadScopeFor(databaseRole) !== 'pending');
   return { incidents: readable ? incidents : [], isLoading, error, reload: loadReports, isPreview: !isSupabaseConfigured };
 }

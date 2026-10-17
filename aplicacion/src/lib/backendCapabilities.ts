@@ -6,7 +6,7 @@ export const backendCapabilities: Readonly<Record<BackendCapability, boolean>> =
   catalogAdministration: false,
   reportAssignment: false,
   atomicTransitions: false,
-  staffEvidence: false
+  staffEvidence: true
 });
 
 export type BackendCapability = 'profileEditing' | 'userAdministration' | 'catalogAdministration' | 'reportAssignment' | 'atomicTransitions' | 'staffEvidence';

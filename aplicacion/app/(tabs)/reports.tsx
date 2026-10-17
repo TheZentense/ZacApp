@@ -72,7 +72,7 @@ export default function ReportsScreen() {
   const [evidenceError, setEvidenceError] = useState('');
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
   const canManageAssignment = databaseRole === 'administrador';
-  const readableIncidents = useMemo(() => databaseRole === 'operador' ? [] : availableIncidents, [availableIncidents, databaseRole]);
+  const readableIncidents = availableIncidents;
   const departmentOptions = useMemo(() => Array.from(new Set(readableIncidents.map((item) => item.department))).sort(), [readableIncidents]);
   const incidents = useMemo(() => readableIncidents.filter((item) => {
     const matchesStatus = filter === 'TODOS' || (filter === 'CERRADOS' ? item.status === 'CERRADO' : item.status !== 'CERRADO');
@@ -85,7 +85,7 @@ export default function ReportsScreen() {
   const heading = databaseRole === 'administrador' ? 'Reportes generales' : databaseRole === 'mantenimiento' ? `Asignaciones · ${department}` : databaseRole === 'operador' ? `Tareas asignadas · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
   const availableTransitions = selected
-    ? (databaseRole === 'mantenimiento' ? maintenanceTransitions[selected.status] : databaseRole === 'administrador' ? administrativeTransitions[selected.status] : []) ?? []
+    ? (databaseRole === 'mantenimiento' || databaseRole === 'operador' ? maintenanceTransitions[selected.status] : databaseRole === 'administrador' ? administrativeTransitions[selected.status] : []) ?? []
     : [];
 
   useEffect(() => {
@@ -211,7 +211,7 @@ export default function ReportsScreen() {
         {managementMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{managementMessage}</Text></View> : null}
         <AppButton disabled={!managementDepartmentId || isSavingManagement} label={isSavingManagement ? 'Guardando...' : 'Guardar asignación'} icon="save-outline" onPress={saveManagement} />
       </View>}
-      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento') && <View style={styles.managementCard}>
+      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento' || databaseRole === 'operador') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
         {availableTransitions.length ? <>
           <Text style={styles.fieldLabel}>Siguiente estado</Text>
@@ -224,7 +224,7 @@ export default function ReportsScreen() {
           <AppButton disabled={!nextStatus || isUpdatingStatus || (nextStatus === 'ASIGNADO' && canManageAssignment && !managementDepartmentId)} label={isUpdatingStatus ? 'Actualizando...' : 'Confirmar cambio'} icon="checkmark-circle-outline" onPress={changeStatus} />
         </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
       </View>}
-      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento') && <View style={styles.managementCard}>
+      {(databaseRole === 'administrador' || databaseRole === 'mantenimiento' || databaseRole === 'operador') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="camera-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Evidencia de atención</Text><Text style={styles.managementCopy}>Adjunta una fotografía del avance o del trabajo realizado. Se optimizará antes de subirla.</Text></View></View>
         {workEvidence ? <View style={styles.evidenceReady}><Ionicons name="image-outline" size={23} color={visual.primary} /><View style={styles.managementTitleBlock}><Text style={styles.evidenceReadyTitle}>Fotografía preparada</Text><Text style={styles.helperText}>Lista para asociarse al reporte {selected.code}.</Text></View><Pressable onPress={() => setWorkEvidence(null)}><Ionicons name="close-circle" size={22} color={colors.muted} /></Pressable></View> : null}
         <View style={styles.evidenceActions}><AppButton label={workEvidence ? 'Cambiar fotografía' : 'Seleccionar fotografía'} icon="images-outline" disabled={isUploadingEvidence} onPress={selectWorkEvidence} /><AppButton label={isUploadingEvidence ? 'Subiendo...' : 'Adjuntar evidencia'} icon="cloud-upload-outline" disabled={!workEvidence || isUploadingEvidence} onPress={submitWorkEvidence} /></View>

@@ -14,7 +14,13 @@ function loader(overrides = {}, globals = {}) {
     'react-native': { Platform: { OS: 'android' } },
     'expo-file-system': { File: class { constructor() { throw new Error('Local file access must be mocked'); } } },
     'expo-image-picker': {},
-    'expo-image-manipulator': {}
+    'expo-image-manipulator': {},
+    'expo-crypto': { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
+    'expo-location': {
+      Accuracy: { High: 5 },
+      requestForegroundPermissionsAsync: async () => ({ granted: true }),
+      getCurrentPositionAsync: async () => ({ coords: { latitude: 14.6349, longitude: -90.5069, accuracy: 10 } })
+    }
   };
   function load(file) {
     const absolute = path.resolve(__dirname, '..', file);
@@ -195,7 +201,7 @@ test('creation RPC errors or empty results clean every uploaded photo without fa
 
 test('workflow permissions come from the verified database role, never the shared visual role', () => {
   const policy = loader()('src/services/sessionPolicy.ts');
-  for (const role of ['operador', 'coordinador', 'comunicacion', 'supervisor', 'employee', 'superadmin', null, undefined]) {
+  for (const role of ['coordinador', 'comunicacion', 'supervisor', 'employee', 'superadmin', null, undefined]) {
     const permissions = policy.workflowPermissionsFor(role);
     assert.equal(permissions.generalReports, false);
     assert.equal(permissions.departmentReports, false);
@@ -203,28 +209,34 @@ test('workflow permissions come from the verified database role, never the share
   }
   assert.equal(policy.reportReadScopeFor('administrador'), 'general');
   assert.equal(policy.reportReadScopeFor('mantenimiento'), 'department');
+  assert.equal(policy.reportReadScopeFor('operador'), 'personal');
   assert.equal(policy.reportReadScopeFor('ciudadano'), 'citizen');
 });
 
-test('operator cannot download other peoples tasks, history or signed photographs while server permissions are unverified', async () => {
-  const { client, calls } = clientDouble(() => { throw new Error('Incident reads are forbidden'); }, { profile: { role: 'operador', department_id: 7 } });
+test('operator report, history and evidence reads are constrained to the authenticated assignee', async () => {
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'incidents' && query.fields.includes('category:')) return { data: [reportsFixture(2)], error: null };
+    if (query.table === 'incidents') return { data: { id: 'incident' }, error: null };
+    return { data: [], error: null };
+  }, { profile: { role: 'operador', department_id: 7 } });
   const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
-  await assert.rejects(reports.listReports(), /pendiente de habilitación/);
-  await assert.rejects(reports.listReportHistory('another-users-task'), /pendiente de habilitación/);
-  await assert.rejects(reports.listReportEvidence('another-users-task'), /pendiente de habilitación/);
-  assert.ok(calls.every((call) => call.operation === 'auth' || call.table === 'profiles'));
-  assert.ok(calls.filter((call) => call.table === 'profiles').every((call) => call.filters.some(([key, value]) => key === 'id' && value === 'owner')));
+  await reports.listReports();
+  await reports.listReportHistory('incident');
+  await reports.listReportEvidence('incident');
+  const incidentQueries = calls.filter((call) => call.table === 'incidents');
+  assert.equal(incidentQueries.length, 3);
+  assert.ok(incidentQueries.every((query) => query.filters.some(([key, value]) => key === 'assigned_to' && value === 'owner')));
 });
 
-test('citizen and department reads include verified server query restrictions', async () => {
-  for (const role of ['ciudadano', 'mantenimiento', 'administrador']) {
+test('citizen, operator and department reads include verified query restrictions', async () => {
+  for (const role of ['ciudadano', 'operador', 'mantenimiento', 'administrador']) {
     const { client, calls } = clientDouble((query) => ({ data: query.fields.includes('category:') ? [reportsFixture(2)] : [], error: null }), { profile: { role, department_id: 7 } });
     const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
     await reports.listReports();
     const queries = calls.filter((call) => call.table === 'incidents');
     assert.equal(queries.length, 1);
     for (const query of queries) {
-      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'mantenimiento' ? ['assigned_department_id', 7] : null;
+      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'operador' ? ['assigned_to', 'owner'] : role === 'mantenimiento' ? ['assigned_department_id', 7] : null;
       if (expected) assert.ok(query.filters.some(([key, value]) => key === expected[0] && value === expected[1]));
       else assert.equal(query.filters.length, 0);
     }
@@ -334,14 +346,27 @@ test('incident cards display real department and textual priority and tolerate a
   assert.ok(nodes(tree).some((node) => Array.isArray(node.props?.children) && node.props.children[0] === 'Prioridad: ' && node.props.children[1] === 'URGENTE'));
 });
 
-test('operator screens expose no administrative controls or incident data even with an administrative appearance', () => {
-  const incident = { ...reportsFixture(2), assignedToId: 'another-user' };
-  for (const file of ['app/(tabs)/reports.tsx', 'app/(tabs)/index.tsx', 'app/(tabs)/admin-menu.tsx', 'app/(tabs)/tracking.tsx']) {
-    const tree = workflowScreenHarness('operador', [incident], 'superadmin').render(file);
-    assert.equal(nodes(tree).some((node) => node.type === 'IncidentCard'), false);
-    const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
-    assert.doesNotMatch(labels, /Validar reportes|Canalizar|Cerrar reporte|Confirmar cambio|Usuarios y accesos/);
-  }
+test('operator screen displays assigned work without administrative controls', () => {
+  const incident = { ...reportsFixture(2), assignedToId: 'owner', status: 'ASIGNADO' };
+  const harness = workflowScreenHarness('operador', [incident], 'superadmin');
+  let tree = harness.render('app/(tabs)/reports.tsx');
+  const card = nodes(tree).find((node) => node.type === 'IncidentCard');
+  assert.ok(card);
+  card.props.onPress();
+  tree = harness.render('app/(tabs)/reports.tsx');
+  const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
+  assert.match(labels, /En atención/);
+  assert.match(labels, /Evidencia de atención/);
+  assert.doesNotMatch(labels, /Guardar asignación|Usuarios y accesos|Cerrar reporte/);
+});
+
+test('operator dashboard presents the enabled personal workflow without pending messages', () => {
+  const incident = { ...reportsFixture(2), assignedToId: 'owner', status: 'ASIGNADO' };
+  const tree = workflowScreenHarness('operador', [incident]).render('app/(tabs)/index.tsx');
+  const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
+  assert.match(labels, /Trabajo asignado a tu cuenta/);
+  assert.match(labels, /Actividad de mis tareas/);
+  assert.doesNotMatch(labels, /pendiente de habilitación|Consulta personal pendiente/);
 });
 
 test('maintenance views never expose administrative assignment controls', () => {
@@ -369,7 +394,7 @@ test('administrator receives only the next valid workflow transitions', () => {
   assert.ok(!labels.includes('Resuelto'));
 });
 
-test('changing identity hides earlier report results before the next focus effect and operators never query reports', async () => {
+test('changing identity hides earlier results and reloads personal operator tasks', async () => {
   let identity = { userId: 'admin-account', databaseRole: 'administrador', departmentId: null, isAuthenticated: true };
   const slots = [];
   let index = 0;
@@ -392,8 +417,8 @@ test('changing identity hides earlier report results before the next focus effec
   identity = { userId: 'different-account', databaseRole: 'operador', departmentId: 7, isAuthenticated: true };
   assert.equal(render().incidents.length, 0);
   blur(); const nextBlur = focus(); await new Promise(setImmediate);
-  assert.equal(render().incidents.length, 0);
-  assert.equal(reads, 1);
+  assert.equal(render().incidents[0].id, 'administrative-report');
+  assert.equal(reads, 2);
   nextBlur();
 });
 
@@ -410,9 +435,22 @@ test('real report reads retain schema priorities and normalize missing or invali
   assert.ok(!calls.some((query) => /difficulty|file_url|file_type/.test(query.fields ?? '')));
 });
 
-test('unverified optional backend entry points remain disabled by default', () => {
+test('only verified optional backend entry points are enabled', () => {
   const capabilities = loader()('src/lib/backendCapabilities.ts');
-  for (const key of Object.keys(capabilities.backendCapabilities)) assert.throws(() => capabilities.requireBackendCapability(key), /Pendiente/);
+  assert.doesNotThrow(() => capabilities.requireBackendCapability('staffEvidence'));
+  for (const key of Object.keys(capabilities.backendCapabilities).filter((key) => key !== 'staffEvidence')) {
+    assert.throws(() => capabilities.requireBackendCapability(key), /Pendiente/);
+  }
+});
+
+test('operator RLS migration isolates tasks, history, evidence and transitions by assignee', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/202610170002_enable_operator_personal_tasks.sql'), 'utf8');
+  assert.match(sql, /p\.role = 'operador' and i\.assigned_to = p\.id/);
+  assert.match(sql, /assigned_to = \(select auth\.uid\(\)\)/);
+  assert.match(sql, /current_user_can_read_incident\(incident_id\)/);
+  assert.match(sql, /incident_row\.assigned_to is distinct from actor_id/);
+  assert.match(sql, /users read permitted incident evidence/);
+  assert.doesNotMatch(sql, /current_user_role\(\) <> 'ciudadano'/);
 });
 
 test('a missing or unrelated profile never derives a visual administrator role from email', () => {
@@ -423,11 +461,21 @@ test('a missing or unrelated profile never derives a visual administrator role f
   assert.equal(policy.visualRoleFor('supervisor'), 'admin');
 });
 
-test('staff evidence upload remains blocked before storage or image fetching', async () => {
-  const { client, calls } = clientDouble(() => ({ data: { id: 'incident', citizen_id: 'someone-else' }, error: null }));
-  const reports = loader({ '@/lib/supabase': { supabase: client } }, { fetch: () => { throw new Error('Image fetch must not execute'); } })('src/services/reports.ts');
-  await assert.rejects(reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' }), /Pendiente/);
-  assert.ok(!calls.some((call) => call.operation === 'upload' || call.operation === 'insert'));
+test('staff evidence is uploaded and linked only after the incident is visible', async () => {
+  const { client, calls } = clientDouble((query) => query.operation === 'insert'
+    ? { data: null, error: null }
+    : { data: { id: 'incident', citizen_id: 'someone-else', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null });
+  const reports = loader({
+    '@/lib/supabase': { supabase: client },
+    'expo-file-system': { File: class { exists = true; size = 64; async arrayBuffer() { return new ArrayBuffer(64); } } }
+  })('src/services/reports.ts');
+  await reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' });
+  assert.equal(calls.filter((call) => call.operation === 'upload').length, 1);
+  const insert = calls.find((call) => call.operation === 'insert');
+  assert.equal(insert.table, 'incident_evidence');
+  assert.equal(insert.values.uploaded_by, 'owner');
+  assert.equal(insert.values.evidence_kind, 'AVANCE');
+  assert.match(insert.values.storage_path, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/incident\/personal-owner\//);
 });
 
 test('citizen evidence uses existing columns and preserves the incident when linking fails', async () => {
