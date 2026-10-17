@@ -14,13 +14,7 @@ function loader(overrides = {}, globals = {}) {
     'react-native': { Platform: { OS: 'android' } },
     'expo-file-system': { File: class { constructor() { throw new Error('Local file access must be mocked'); } } },
     'expo-image-picker': {},
-    'expo-image-manipulator': {},
-    'expo-crypto': { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
-    'expo-location': {
-      Accuracy: { High: 5 },
-      requestForegroundPermissionsAsync: async () => ({ granted: true }),
-      getCurrentPositionAsync: async () => ({ coords: { latitude: 14.6349, longitude: -90.5069, accuracy: 10 } })
-    }
+    'expo-image-manipulator': {}
   };
   function load(file) {
     const absolute = path.resolve(__dirname, '..', file);
@@ -213,19 +207,23 @@ test('workflow permissions come from the verified database role, never the share
   assert.equal(policy.reportReadScopeFor('ciudadano'), 'citizen');
 });
 
-test('operator report, history and evidence reads are constrained to the authenticated assignee', async () => {
-  const { client, calls } = clientDouble((query) => {
-    if (query.table === 'incidents' && query.fields.includes('category:')) return { data: [reportsFixture(2)], error: null };
-    if (query.table === 'incidents') return { data: { id: 'incident' }, error: null };
-    return { data: [], error: null };
-  }, { profile: { role: 'operador', department_id: 7 } });
-  const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
-  await reports.listReports();
-  await reports.listReportHistory('incident');
-  await reports.listReportEvidence('incident');
-  const incidentQueries = calls.filter((call) => call.table === 'incidents');
-  assert.equal(incidentQueries.length, 3);
-  assert.ok(incidentQueries.every((query) => query.filters.some(([key, value]) => key === 'assigned_to' && value === 'owner')));
+test('operator cannot read another assignee history or photos even in the same department', async () => {
+  for (const userId of ['operator-a', 'operator-b']) {
+    const { client, calls } = clientDouble((query) => {
+      assert.equal(query.table, 'incidents');
+      assert.ok(query.filters.some(([key, value]) => key === 'assigned_to' && value === userId));
+      assert.ok(query.filters.some(([key, value]) => key === 'id' && value === 'other-task'));
+      return { data: null, error: null };
+    }, {
+      profile: { role: 'operador', department_id: 7 },
+      auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) }
+    });
+    const reports = reportsWithPhotos(client);
+    await assert.rejects(reports.listReportHistory('other-task'), /no está disponible/);
+    await assert.rejects(reports.listReportEvidence('other-task'), /no está disponible/);
+    assert.ok(calls.filter((call) => call.table === 'profiles').every((call) => call.filters.some(([key, value]) => key === 'id' && value === userId)));
+    assert.ok(!calls.some((call) => call.operation === 'sign' || call.table === 'incident_history' || call.table === 'incident_evidence'));
+  }
 });
 
 test('citizen, operator and department reads include verified query restrictions', async () => {
@@ -360,15 +358,6 @@ test('operator screen displays assigned work without administrative controls', (
   assert.doesNotMatch(labels, /Guardar asignación|Usuarios y accesos|Cerrar reporte/);
 });
 
-test('operator dashboard presents the enabled personal workflow without pending messages', () => {
-  const incident = { ...reportsFixture(2), assignedToId: 'owner', status: 'ASIGNADO' };
-  const tree = workflowScreenHarness('operador', [incident]).render('app/(tabs)/index.tsx');
-  const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
-  assert.match(labels, /Trabajo asignado a tu cuenta/);
-  assert.match(labels, /Actividad de mis tareas/);
-  assert.doesNotMatch(labels, /pendiente de habilitación|Consulta personal pendiente/);
-});
-
 test('maintenance views never expose administrative assignment controls', () => {
   const incidents = [
     { ...reportsFixture(1), id: 'one', assignedToId: null, status: 'ASIGNADO' },
@@ -409,7 +398,7 @@ test('changing identity hides earlier results and reloads personal operator task
     'expo-router': { useFocusEffect: (callback) => { focus = callback; } },
     '@/lib/supabase': { isSupabaseConfigured: true },
     '@/context/SessionContext': { useSession: () => identity },
-    '@/services/reports': { listReports: async () => { reads++; return [{ id: 'administrative-report' }]; } }
+    '@/services/reports': { listReports: async () => { reads++; return [{ id: identity.databaseRole === 'operador' ? 'personal-report' : 'administrative-report' }]; } }
   })('src/hooks/useReports.ts').useReports;
   const render = () => { index = 0; return hook(); };
   render(); const blur = focus(); await new Promise(setImmediate);
@@ -417,7 +406,7 @@ test('changing identity hides earlier results and reloads personal operator task
   identity = { userId: 'different-account', databaseRole: 'operador', departmentId: 7, isAuthenticated: true };
   assert.equal(render().incidents.length, 0);
   blur(); const nextBlur = focus(); await new Promise(setImmediate);
-  assert.equal(render().incidents[0].id, 'administrative-report');
+  assert.equal(render().incidents[0].id, 'personal-report');
   assert.equal(reads, 2);
   nextBlur();
 });
@@ -443,16 +432,6 @@ test('only verified optional backend entry points are enabled', () => {
   }
 });
 
-test('operator RLS migration isolates tasks, history, evidence and transitions by assignee', () => {
-  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/202610170002_enable_operator_personal_tasks.sql'), 'utf8');
-  assert.match(sql, /p\.role = 'operador' and i\.assigned_to = p\.id/);
-  assert.match(sql, /assigned_to = \(select auth\.uid\(\)\)/);
-  assert.match(sql, /current_user_can_read_incident\(incident_id\)/);
-  assert.match(sql, /incident_row\.assigned_to is distinct from actor_id/);
-  assert.match(sql, /users read permitted incident evidence/);
-  assert.doesNotMatch(sql, /current_user_role\(\) <> 'ciudadano'/);
-});
-
 test('a missing or unrelated profile never derives a visual administrator role from email', () => {
   const policy = loader()('src/services/sessionPolicy.ts');
   for (const role of [null, undefined, 'superadmin@example.invalid', 'admin', {}, 'INACTIVO']) assert.equal(policy.visualRoleFor(role), 'citizen');
@@ -461,21 +440,14 @@ test('a missing or unrelated profile never derives a visual administrator role f
   assert.equal(policy.visualRoleFor('supervisor'), 'admin');
 });
 
-test('staff evidence is uploaded and linked only after the incident is visible', async () => {
-  const { client, calls } = clientDouble((query) => query.operation === 'insert'
-    ? { data: null, error: null }
-    : { data: { id: 'incident', citizen_id: 'someone-else', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null });
+test('invisible staff incidents block evidence before local reads or uploads', async () => {
+  const { client, calls } = clientDouble(() => ({ data: null, error: null }), { profile: { role: 'operador', department_id: 7 } });
   const reports = loader({
     '@/lib/supabase': { supabase: client },
-    'expo-file-system': { File: class { exists = true; size = 64; async arrayBuffer() { return new ArrayBuffer(64); } } }
-  })('src/services/reports.ts');
-  await reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' });
-  assert.equal(calls.filter((call) => call.operation === 'upload').length, 1);
-  const insert = calls.find((call) => call.operation === 'insert');
-  assert.equal(insert.table, 'incident_evidence');
-  assert.equal(insert.values.uploaded_by, 'owner');
-  assert.equal(insert.values.evidence_kind, 'AVANCE');
-  assert.match(insert.values.storage_path, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/incident\/personal-owner\//);
+    'expo-file-system': { File: class { constructor() { assert.fail('Invisible incidents must not read images'); } } }
+  }, { fetch: () => { assert.fail('Invisible incidents must not fetch images'); } })('src/services/reports.ts');
+  await assert.rejects(reports.uploadReportEvidence('another-users-task', { uri: 'local://image', mimeType: 'image/jpeg' }), /no está disponible/);
+  assert.ok(!calls.some((call) => call.operation === 'upload' || call.operation === 'insert'));
 });
 
 test('citizen evidence uses existing columns and preserves the incident when linking fails', async () => {
@@ -1020,4 +992,275 @@ test('a delayed administrative profile cannot replace a newer citizen identity',
   assert.equal(session.userId, 'new');
   assert.equal(session.departmentId, 7);
   cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('operator report, history and evidence reads are constrained to the authenticated assignee', async () => {
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'incidents' && query.fields.includes('category:')) return { data: [reportsFixture(2)], error: null };
+    if (query.table === 'incidents') return { data: { id: 'incident' }, error: null };
+    return { data: [], error: null };
+  }, { profile: { role: 'operador', department_id: 7 } });
+  const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
+  await reports.listReports();
+  await reports.listReportHistory('incident');
+  await reports.listReportEvidence('incident');
+  const incidentQueries = calls.filter((call) => call.table === 'incidents');
+  assert.equal(incidentQueries.length, 3);
+  assert.ok(incidentQueries.every((query) => query.filters.some(([key, value]) => key === 'assigned_to' && value === 'owner')));
+});
+
+test('two operators in the same department receive only their assigned incidents and private evidence', async () => {
+  const incidents = [
+    { ...reportsFixture('MEDIA'), id: 'task-a', assigned_to: 'operator-a', assigned_department_id: 7 },
+    { ...reportsFixture('ALTA'), id: 'task-b', assigned_to: 'operator-b', assigned_department_id: 7 },
+    { ...reportsFixture('BAJA'), id: 'unassigned', assigned_to: null, assigned_department_id: 7 }
+  ];
+  for (const [userId, taskId] of [['operator-a', 'task-a'], ['operator-b', 'task-b']]) {
+    const { client, calls } = clientDouble((query) => {
+      if (query.table === 'incidents') {
+        const visible = incidents.filter((row) => query.filters.every(([key, value]) => row[key] === value));
+        return { data: query.single ? visible[0] ?? null : visible, error: null };
+      }
+      if (query.table === 'incident_history') return { data: [], error: null };
+      assert.equal(query.table, 'incident_evidence');
+      return { data: [evidenceRow(`citizen/${taskId}/photo.jpg`, 'citizen')], error: null };
+    }, {
+      profile: { role: 'operador', department_id: 7 },
+      auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) }
+    });
+    const reports = reportsWithPhotos(client);
+    assert.deepEqual(Array.from(await reports.listReports(), (row) => row.id), [taskId]);
+    for (const denied of incidents.filter((row) => row.id !== taskId)) {
+      await assert.rejects(reports.listReportHistory(denied.id), /no está disponible/);
+      await assert.rejects(reports.listReportEvidence(denied.id), /no está disponible/);
+    }
+    assert.ok(!calls.some((call) => call.operation === 'sign' || call.table === 'incident_evidence' || call.table === 'incident_history'));
+    await reports.listReportHistory(taskId);
+    assert.equal((await reports.listReportEvidence(taskId)).length, 1);
+    assert.deepEqual(calls.filter((call) => call.operation === 'sign'), [{
+      operation: 'sign', bucket: 'incidente-evidencia', storagePath: `citizen/${taskId}/photo.jpg`, ttl: 900
+    }]);
+  }
+});
+
+test('operator screens offer only attention and verification transitions without assignment or closure controls', () => {
+  for (const [status, expected] of [['ASIGNADO', 'En atención'], ['EN_ATENCION', 'Por verificar'], ['POR_VERIFICAR', null]]) {
+    const harness = workflowScreenHarness('operador', [{ ...reportsFixture('MEDIA'), status, assignedToId: 'owner' }], 'superadmin');
+    let tree = harness.render();
+    nodes(tree).find((node) => node.type === 'IncidentCard').props.onPress();
+    tree = harness.render();
+    const labels = nodes(tree).map((node) => node.props?.children).filter((value) => typeof value === 'string');
+    for (const transition of ['En atención', 'Por verificar', 'En revisión', 'Validado', 'Rechazado', 'Resuelto']) {
+      assert.equal(labels.includes(transition), transition === expected);
+    }
+    assert.ok(!nodes(tree).some((node) => node.props?.label === 'Guardar asignación'));
+    assert.equal(nodes(tree).some((node) => node.props?.label === 'Confirmar cambio'), Boolean(expected));
+  }
+});
+
+test('operator state changes use the server RPC and propagate access and transition denials without direct writes', async () => {
+  for (const [previous, next] of [['ASIGNADO', 'EN_ATENCION'], ['EN_ATENCION', 'POR_VERIFICAR']]) {
+    const { client, calls } = clientDouble(undefined, { rpc: async () => ({ data: '2026-10-15T12:00:00Z', error: null }) });
+    const result = await reportsWithPhotos(client).updateReportStatus('personal-task', previous, next, '  Avance verificado  ');
+    assert.equal(result.historyRecorded, true);
+    const rpc = calls.find((call) => call.operation === 'rpc');
+    assert.equal(rpc.name, 'transition_incident');
+    assert.equal(rpc.parameters.p_incident_id, 'personal-task');
+    assert.equal(rpc.parameters.p_previous_status, previous);
+    assert.equal(rpc.parameters.p_new_status, next);
+    assert.equal(rpc.parameters.p_note, 'Avance verificado');
+    assert.ok(!calls.some((call) => call.operation === 'insert' || call.operation === 'update'));
+  }
+  for (const message of ['Incident access denied', 'Transition not allowed', 'Incident status changed']) {
+    const { client, calls } = clientDouble(undefined, { rpc: async () => ({ data: null, error: { message } }) });
+    await assert.rejects(reportsWithPhotos(client).updateReportStatus('other-task', 'POR_VERIFICAR', 'CERRADO', 'Intento no permitido'));
+    assert.equal(calls.filter((call) => call.operation === 'rpc').length, 1);
+    assert.ok(!calls.some((call) => call.operation === 'insert' || call.operation === 'update'));
+  }
+});
+
+test('operator dashboard presents the enabled personal workflow without pending messages', () => {
+  const incident = { ...reportsFixture(2), assignedToId: 'owner', status: 'ASIGNADO' };
+  const tree = workflowScreenHarness('operador', [incident]).render('app/(tabs)/index.tsx');
+  const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
+  assert.match(labels, /Trabajo asignado a tu cuenta/);
+  assert.match(labels, /Actividad de mis tareas/);
+  assert.doesNotMatch(labels, /pendiente de habilitación|Consulta personal pendiente/);
+});
+
+test('operator RLS migration isolates tasks, history, evidence and transitions by assignee', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/202610170002_enable_operator_personal_tasks.sql'), 'utf8');
+  assert.match(sql, /p\.role = 'operador' and i\.assigned_to = p\.id/);
+  assert.match(sql, /assigned_to = \(select auth\.uid\(\)\)/);
+  assert.match(sql, /current_user_can_read_incident\(incident_id\)/);
+  assert.match(sql, /incident_row\.assigned_to is distinct from actor_id/);
+  assert.match(sql, /users read permitted incident evidence/);
+  assert.doesNotMatch(sql, /current_user_role\(\) <> 'ciudadano'/);
+});
+
+// Source-level audit of ordered repository migrations, not a live PostgreSQL test.
+function effectiveIncidentPolicies() {
+  const directory = path.resolve(__dirname, '..', 'supabase/migrations');
+  const policies = new Map();
+  for (const file of fs.readdirSync(directory).filter((name) => name.endsWith('.sql')).sort()) {
+    const sql = fs.readFileSync(path.join(directory, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '');
+    assert.doesNotMatch(sql, /\balter\s+policy\b/i, 'Extend the source audit before using ALTER POLICY');
+    const statements = /\b(create\s+policy|drop\s+policy(?:\s+if\s+exists)?)\s+(?:"([^"]+)"|([a-z_][a-z0-9_]*))\s+on\s+((?:public|storage)\.[a-z_][a-z0-9_]*)([^;]*);/gi;
+    for (const match of sql.matchAll(statements)) {
+      const name = match[2] ?? match[3];
+      const table = match[4].toLowerCase();
+      const key = `${table}:${name}`;
+      if (/^drop/i.test(match[1])) policies.delete(key);
+      else policies.set(key, {
+        name, table, file, sql: match[0].replace(/\s+/g, ' ').trim(),
+        command: match[5].match(/\bfor\s+(all|select|insert|update|delete)\b/i)?.[1].toLowerCase() ?? 'all'
+      });
+    }
+  }
+  return policies;
+}
+
+test('effective citizen SELECT and INSERT policies require current citizen role, active account and exact ownership', () => {
+  const policies = effectiveIncidentPolicies();
+  const requirements = [
+    "(select private.current_user_role()) = 'ciudadano'",
+    '(select private.current_user_is_active())',
+    'citizen_id = (select auth.uid())'
+  ];
+  for (const [name, command] of [['citizens read own incidents', 'select'], ['citizens create own incidents', 'insert']]) {
+    const policy = policies.get(`public.incidents:${name}`);
+    assert.ok(policy);
+    assert.equal(policy.file, '202610170003_restrict_citizen_incident_policies.sql');
+    assert.equal(policy.command, command);
+    assert.match(policy.sql, /to authenticated/);
+    const expression = policy.sql.match(/(?:using|with check) \( (.*) \);$/)?.[1];
+    const expected = command === 'select' ? requirements : [
+      ...requirements, "status = 'REGISTRADO'", 'assigned_department_id is null', 'assigned_to is null'
+    ];
+    // Exact AND conditions also reject an ownership-only OR branch or a role bypass.
+    assert.equal(expression, expected.join(' and '));
+  }
+});
+
+test('effective read policies have no surviving departmental or storage-owner bypass for operators', () => {
+  const policies = effectiveIncidentPolicies();
+  const tables = ['public.incidents', 'public.incident_history', 'public.incident_evidence', 'storage.objects'];
+  const readers = [...policies.entries()].filter(([, policy]) => tables.includes(policy.table) && ['all', 'select'].includes(policy.command));
+  assert.deepEqual(readers.map(([key]) => key).sort(), [
+    'public.incidents:citizens read own incidents', 'public.incidents:staff read permitted incidents',
+    'public.incident_history:incident history follows incident visibility',
+    'public.incident_evidence:evidence follows incident visibility',
+    'storage.objects:users read permitted incident evidence'
+  ].sort());
+  const creators = [...policies.values()].filter((policy) => policy.table === 'public.incidents' && ['all', 'insert'].includes(policy.command));
+  assert.deepEqual(creators.map((policy) => policy.name), ['citizens create own incidents']);
+  const staff = policies.get('public.incidents:staff read permitted incidents').sql;
+  assert.match(staff, /current_user_is_active\(\)/);
+  assert.ok(staff.includes("(select private.current_user_role()) = 'operador' and assigned_to = (select auth.uid())"));
+  assert.deepEqual([...staff.matchAll(/current_user_role\(\)\) in \(([^)]+)\)/g)].map((match) => match[1]), [
+    "'administrador', 'supervisor'", "'coordinador', 'comunicacion', 'mantenimiento'"
+  ]);
+  assert.match(staff, /coalesce\( assigned_department_id, .*current_department_id\(\)/);
+  for (const [key, policy] of readers) {
+    assert.match(policy.sql, /to authenticated/);
+    assert.doesNotMatch(policy.sql, /current_user_role\(\)\) <> 'ciudadano'/);
+    if (key.startsWith('public.incident_history:') || key.startsWith('public.incident_evidence:')) {
+      assert.match(policy.sql, /current_user_is_active\(\)/);
+      assert.match(policy.sql, /current_user_can_read_incident\(incident_id\)/);
+    }
+  }
+  const storage = policies.get('storage.objects:users read permitted incident evidence').sql;
+  assert.match(storage, /bucket_id = 'incidente-evidencia'/);
+  assert.match(storage, /e\.storage_path = name and \(select private\.current_user_can_read_incident\(e\.incident_id\)\)/);
+  assert.doesNotMatch(storage, /storage\.foldername|owner_id/);
+});
+
+test('a former citizen loses access to old self-reported incidents after becoming an operator unless assigned', async () => {
+  const profile = { role: 'ciudadano', department_id: 7 };
+  const incidents = [
+    { ...reportsFixture('MEDIA'), id: 'old-unassigned', citizen_id: 'owner', assigned_to: null, assigned_department_id: 7 },
+    { ...reportsFixture('MEDIA'), id: 'old-assigned-to-colleague', citizen_id: 'owner', assigned_to: 'colleague', assigned_department_id: 7 },
+    { ...reportsFixture('MEDIA'), id: 'current-personal-task', citizen_id: 'another-citizen', assigned_to: 'owner', assigned_department_id: 7 }
+  ];
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'incidents') {
+      const rows = incidents.filter((row) => query.filters.every(([key, value]) => row[key] === value));
+      return { data: query.single ? rows[0] ?? null : rows, error: null };
+    }
+    assert.equal(query.table, 'incident_history');
+    return { data: [], error: null };
+  }, { profile });
+  const reports = reportsWithPhotos(client);
+  assert.deepEqual(Array.from(await reports.listReports(), (row) => row.id), ['old-unassigned', 'old-assigned-to-colleague']);
+  profile.role = 'operador';
+  assert.deepEqual(Array.from(await reports.listReports(), (row) => row.id), ['current-personal-task']);
+  calls.length = 0;
+  for (const incidentId of ['old-unassigned', 'old-assigned-to-colleague']) {
+    await assert.rejects(reports.listReportHistory(incidentId), /no está disponible/);
+    await assert.rejects(reports.listReportEvidence(incidentId), /no está disponible/);
+  }
+  assert.ok(!calls.some((call) => call.table === 'incident_history' || call.table === 'incident_evidence' || call.operation === 'sign'));
+  assert.deepEqual(Array.from(await reports.listReportHistory('current-personal-task')), []);
+});
+
+test('staff evidence is uploaded and linked only after the incident is visible', async () => {
+  const { client, calls } = clientDouble((query) => query.operation === 'insert'
+    ? { data: null, error: null }
+    : { data: { id: 'incident', citizen_id: 'someone-else', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null });
+  const reports = loader({
+    '@/lib/supabase': { supabase: client },
+    'expo-file-system': { File: class { exists = true; size = 64; async arrayBuffer() { return new ArrayBuffer(64); } } }
+  })('src/services/reports.ts');
+  await reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' });
+  assert.equal(calls.filter((call) => call.operation === 'upload').length, 1);
+  const insert = calls.find((call) => call.operation === 'insert');
+  assert.equal(insert.table, 'incident_evidence');
+  assert.equal(insert.values.uploaded_by, 'owner');
+  assert.equal(insert.values.evidence_kind, 'AVANCE');
+  assert.match(insert.values.storage_path, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/incident\/personal-owner\//);
+});
+
+test('the report screen submits atomically and blocks overlapping submissions', async () => {
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'categories' && query.fields.includes('department:')) return { data: { id: 1, department: { code: 'AGUA' } }, error: null };
+    if (query.table === 'categories') return { data: [{ id: 1, name: 'Agua potable' }], error: null };
+    return { data: null, error: null };
+  }, {
+    rpc: async (name) => {
+      assert.equal(name, 'create_incident_with_evidence');
+      return { data: [{ id: 'new-incident', code: 'ZAC-2026-000003' }], error: null };
+    }
+  });
+  const harness = reportScreenHarness(client, class {
+    exists = true; size = 64;
+    async arrayBuffer() { return new ArrayBuffer(64); }
+  });
+  harness.render(); harness.mount(); await new Promise(setImmediate);
+  let tree = harness.render();
+  const camera = nodes(tree).find((node) => node.type === 'CameraView');
+  assert.equal(camera.props.children, undefined);
+  const cameraContainer = nodes(tree).find((node) => Array.isArray(node.props?.children) && node.props.children.includes(camera));
+  assert.equal(cameraContainer.props.children[1].props.style.position, 'absolute');
+  const inputs = nodes(tree).filter((node) => node.type === 'TextInput');
+  inputs[0].props.onChangeText('Falla de prueba local'); inputs[1].props.onChangeText('Ubicación local');
+  const locationButton = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Obtener ubicación GPS'));
+  await locationButton.props.onPress();
+  const gallery = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Elegir de galería'));
+  await gallery.props.onPress();
+  tree = harness.render();
+  const submit = nodes(tree).find((node) => node.props?.label === 'Enviar reporte').props.onPress;
+  const firstSubmission = submit();
+  await submit();
+  await firstSubmission;
+  tree = harness.render();
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'ZAC-2026-000003'));
+  assert.equal(calls.filter((call) => call.operation === 'rpc').length, 1);
+  assert.equal(calls.filter((call) => call.table === 'incidents' && call.operation === 'insert').length, 0);
+  assert.equal(calls.filter((call) => call.table === 'incident_evidence' && call.operation === 'insert').length, 0);
+  const upload = calls.find((call) => call.operation === 'upload');
+  assert.equal(upload.bucket, 'incidente-evidencia');
+  assert.match(upload.storagePath, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/00000000-0000-4000-8000-000000000001\/ciudadano-owner\/evidencia-inicial\.jpg$/);
+  assert.equal(upload.config.contentType, 'image/jpeg');
+  assert.equal(upload.config.upsert, false);
 });
