@@ -59,12 +59,12 @@ const dashboards: Record<UserRole, Dashboard> = {
     ], activity: 'Reportes recientes del departamento',
   },
   employee: {
-    title: 'Mis tareas', copy: 'La consulta personal está pendiente de habilitación segura.',
+    title: 'Mis tareas', copy: 'Consulta y actualiza únicamente el trabajo asignado a tu cuenta.',
     actions: [
-      { title: 'Mis tareas', copy: 'Consulta personal pendiente', icon: 'file-tray-full-outline', route: '/reports' },
+      { title: 'Mis tareas', copy: 'Trabajo asignado a tu cuenta', icon: 'file-tray-full-outline', route: '/reports' },
       { title: 'Seguimiento personal', copy: 'Observaciones e historial autorizado', icon: 'git-branch-outline', route: '/tracking' },
       { title: 'Herramientas', copy: 'Funciones del empleado operativo', icon: 'apps-outline', route: '/admin-menu' }
-    ], activity: 'Movimientos del departamento',
+    ], activity: 'Actividad de mis tareas',
   }
 };
 
@@ -133,10 +133,10 @@ export default function HomeScreen() {
   const priorityIncident = useMemo(() => incidents
     .filter((item) => item.status !== 'CERRADO' && item.status !== 'RECHAZADO')[0], [incidents]);
   const dashboardCopy = (role === 'maintenance' || role === 'employee') && department
-    ? role === 'maintenance' ? `Reportes canalizados a ${department}.` : 'Consulta personal pendiente de habilitación.'
+    ? role === 'maintenance' ? `Reportes canalizados a ${department}.` : 'Consulta únicamente las tareas asignadas a tu cuenta.'
     : content.copy;
 
-  if (pending) return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}><View style={[styles.hero, styles.heroCompact, { backgroundColor: visual.primary }]}><Text style={styles.heading}>{permissions.operator ? 'Mis tareas' : 'Consulta pendiente'}</Text><Text style={styles.copy}>{permissions.operator ? 'La consulta de tareas estará disponible cuando se habiliten las asignaciones.' : 'Esta consulta estará disponible en una próxima etapa.'}</Text></View><AppButton label="Mis tareas · pendiente" onPress={() => router.push('/reports')} /><AppButton label="Mi perfil" variant="secondary" onPress={() => router.push('/profile')} /></ScrollView>;
+  if (pending) return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}><View style={[styles.hero, styles.heroCompact, { backgroundColor: visual.primary }]}><Text style={styles.heading}>Consulta no disponible</Text><Text style={styles.copy}>Esta cuenta todavía no tiene una consulta de reportes habilitada.</Text></View><AppButton label="Mi perfil" variant="secondary" onPress={() => router.push('/profile')} /></ScrollView>;
 
   return (
     <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={[styles.page, isWide && styles.pageWide]}>

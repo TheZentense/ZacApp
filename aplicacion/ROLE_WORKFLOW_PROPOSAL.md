@@ -34,13 +34,14 @@ Confirmar quién ejerce realmente de encargado antes de habilitar facultades nue
 - Consulta general del administrador y consulta departamental de mantenimiento.
 - El servicio verifica el usuario autenticado y su perfil. Las consultas de ciudadano
   y departamento incluyen sus restricciones en la petición al servidor, además de RLS.
-- La bandeja del operador está deshabilitada: las políticas del servidor que limitan
-  tareas por `assigned_to = auth.uid()` todavía no están confirmadas.
+- La bandeja del operador consulta únicamente tareas donde
+  `assigned_to = auth.uid()` y conserva ese mismo alcance en historial y evidencias.
 - El bloqueo se aplica también al servicio de listado, historial y URLs de evidencia;
   no se descargan reportes generales para filtrarlos visualmente como tareas propias.
 - `assigned_department_id` identifica el área; `assigned_to`, el perfil responsable.
   Si existe responsable se muestra su ID real; no se inventan nombres ni empleados.
-- `reportAssignment`, `staffEvidence` y `atomicTransitions` siguen deshabilitados.
+- La evidencia del personal está habilitada para reportes visibles; las demás
+  capacidades opcionales conservan su protección independiente.
 - Se retira la escritura antigua de estados e historial. No se usa como alternativa
   a una operación transaccional pendiente. Las acciones de gestión permanecen inactivas.
 - Se conservan prioridad numérica 1–4 y las correcciones de cámara, galería y JPEG.
