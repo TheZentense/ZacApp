@@ -1,53 +1,48 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Redirect, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
+import { workflowPermissionsFor } from '@/services/sessionPolicy';
 
 const functions = [
-  { title: 'Gestionar reportes', copy: 'Consultar y actualizar incidencias', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Bandeja general', copy: 'Reportes y casos por validar', icon: 'document-text-outline', route: '/reports' },
   { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Asignaciones', copy: 'Distribuir reportes entre las áreas responsables', icon: 'git-branch-outline' },
-  { title: 'Usuarios', copy: 'Administrar cuentas y accesos', icon: 'people-outline' },
-  { title: 'Roles y permisos', copy: 'Definir funciones del personal', icon: 'shield-checkmark-outline' },
-  { title: 'Categorías', copy: 'Organizar los tipos de incidencias', icon: 'pricetags-outline' },
-  { title: 'Áreas municipales', copy: 'Organizar departamentos y responsables', icon: 'business-outline' },
-  { title: 'Notificaciones', copy: 'Gestionar avisos y comunicaciones', icon: 'notifications-outline' },
-  { title: 'Reportes y métricas', copy: 'Consultar indicadores de atención', icon: 'bar-chart-outline' },
-  { title: 'Configuración', copy: 'Administrar preferencias del sistema', icon: 'settings-outline' },
+  { title: 'Por departamento', copy: 'Consulta los reportes canalizados', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Panel operativo', copy: 'Consultar indicadores y carga departamental', icon: 'bar-chart-outline', route: '/' },
+  { title: 'Usuarios y accesos', copy: 'Consultar cuentas · edición pendiente', icon: 'people-outline', route: '/admin/users' },
+  { title: 'Categorías y áreas', copy: 'Consultar catálogos · edición pendiente', icon: 'pricetags-outline', route: '/admin/catalogs' },
   { title: 'Mi perfil', copy: 'Consultar la sesión administrativa', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 const maintenanceFunctions = [
-  { title: 'Trabajo asignado', copy: 'Consultar órdenes del departamento', icon: 'clipboard-outline', route: '/reports' },
-  { title: 'Actualizar estado', copy: 'Registrar el avance de una atención', icon: 'sync-outline', route: '/tracking' },
-  { title: 'Agregar evidencia', copy: 'Documentar el trabajo realizado', icon: 'camera-outline' },
-  { title: 'Ubicación', copy: 'Consultar el punto de atención', icon: 'location-outline' },
+  { title: 'Bandeja departamental', copy: 'Casos canalizados al departamento', icon: 'clipboard-outline', route: '/reports' },
+  { title: 'Empleados y responsables', copy: 'Responsable actual · asignación pendiente', icon: 'people-outline', route: '/reports' },
+  { title: 'Evidencia e historial', copy: 'Consultar fotografías y movimientos', icon: 'camera-outline', route: '/tracking' },
+  { title: 'Casos por verificar', copy: 'Consultar trabajos · verificación pendiente', icon: 'checkmark-done-outline', route: '/reports' },
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 const employeeFunctions = [
-  { title: 'Bandeja departamental', copy: 'Revisar reportes recibidos', icon: 'file-tray-full-outline', route: '/reports' },
-  { title: 'Validar reportes', copy: 'Confirmar información y categoría', icon: 'checkmark-done-outline', route: '/tracking' },
-  { title: 'Canalizar', copy: 'Enviar casos al equipo responsable', icon: 'git-branch-outline' },
-  { title: 'Historial del área', copy: 'Consultar movimientos del departamento', icon: 'time-outline' },
+  { title: 'Mis tareas', copy: 'Asignación personal pendiente', icon: 'clipboard-outline', route: '/reports' },
+  { title: 'Mi seguimiento', copy: 'Observaciones e historial · pendiente', icon: 'time-outline', route: '/tracking' },
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
 export default function AdminMenuScreen() {
   const { width } = useWindowDimensions();
-  const { role } = useSession();
+  const { role, databaseRole } = useSession();
+  const permissions = workflowPermissionsFor(databaseRole);
   const visual = roleVisuals[role];
-  const visibleFunctions = role === 'maintenance' ? maintenanceFunctions : role === 'employee' ? employeeFunctions : functions;
-  const title = role === 'maintenance' ? 'Herramientas de campo' : role === 'employee' ? 'Funciones del departamento' : 'Funciones administrativas';
+  const visibleFunctions = permissions.departmentReports ? maintenanceFunctions : permissions.generalReports ? functions : employeeFunctions.filter((item) => permissions.operator || item.route === '/profile');
+  const title = permissions.departmentReports ? 'Encargado departamental' : permissions.generalReports ? 'Administración general' : permissions.operator ? 'Empleado operativo' : 'Funciones pendientes';
   const isWide = width >= 780;
 
   if (role === 'citizen') return <Redirect href="/services" />;
 
   const openFunction = (item: (typeof visibleFunctions)[number]) => {
-    if ('route' in item) return router.push(item.route);
-    Alert.alert(item.title, 'Módulo en preparación.');
+    router.push(item.route);
   };
 
   return (
@@ -56,12 +51,12 @@ export default function AdminMenuScreen() {
         <View style={styles.headerMain}>
           <View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="options-outline" size={26} color={visual.primary} /></View>
           <View style={styles.headerText}>
-            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · CENTRO DE CONTROL</Text>
+            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow}</Text>
             <Text style={styles.title}>{title}</Text>
-            <Text style={styles.copy}>Selecciona una función disponible para tu rol.</Text>
+            <Text style={styles.copy}>Elige una opción para continuar.</Text>
           </View>
         </View>
-        <View style={styles.moduleCount}><Text style={[styles.moduleNumber, { color: visual.accent }]}>{visibleFunctions.length}</Text><Text style={styles.moduleLabel}>módulos disponibles</Text></View>
+        <View style={styles.moduleCount}><Text style={[styles.moduleNumber, { color: visual.accent }]}>{visibleFunctions.length}</Text><Text style={styles.moduleLabel}>accesos para tu rol</Text></View>
       </View>
 
       <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>HERRAMIENTAS</Text><Text style={styles.sectionTitle}>¿Qué deseas hacer?</Text></View>
@@ -83,13 +78,13 @@ export default function AdminMenuScreen() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: colors.background },
-  page: { width: '100%', maxWidth: 900, alignSelf: 'center', padding: spacing.lg, gap: spacing.lg },
+  page: { width: '100%', maxWidth: 900, alignSelf: 'center', padding: spacing.md, gap: spacing.lg },
   header: { backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.lg, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: spacing.lg },
-  headerMain: { flex: 1, minWidth: 260, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  headerIcon: { width: 52, height: 52, borderRadius: 16, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
-  headerText: { flex: 1 },
+  headerMain: { flex: 1, minWidth: 0, flexBasis: 260, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  headerIcon: { flexShrink: 0, width: 46, height: 46, borderRadius: 16, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
+  headerText: { flex: 1, minWidth: 0 },
   eyebrow: { fontSize: 10, fontWeight: '900', letterSpacing: 1.1, marginBottom: spacing.xs },
-  title: { color: colors.white, fontSize: 24, fontWeight: '800' },
+  title: { color: colors.white, fontSize: 23, lineHeight: 29, fontWeight: '800' },
   copy: { color: '#DDE8D7', marginTop: spacing.xs, lineHeight: 20 },
   moduleCount: { minWidth: 130, borderRadius: radius.lg, padding: spacing.md, backgroundColor: 'rgba(255,255,255,0.10)' },
   moduleNumber: { fontSize: 28, fontWeight: '900' },
@@ -98,11 +93,11 @@ const styles = StyleSheet.create({
   sectionKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '800' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  card: { minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  card: { flexGrow: 1, flexBasis: '100%', minWidth: 0, minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cardWide: { flexBasis: 340, flexGrow: 1 },
   icon: { width: 46, height: 46, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
-  cardText: { flex: 1 },
-  cardTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
+  cardText: { flex: 1, minWidth: 0 },
+  cardTitle: { color: colors.primary, fontSize: 15, lineHeight: 21, fontWeight: '800' },
   cardCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
   cardArrow: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.8 }

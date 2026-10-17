@@ -10,6 +10,6 @@ const storage = Platform.OS === 'web' && typeof window === 'undefined' ? undefin
 export const isSupabaseConfigured = Boolean(url && anonKey);
 export const supabase = isSupabaseConfigured
   ? createClient(url!, anonKey!, {
-      auth: { storage, autoRefreshToken: true, persistSession: Boolean(storage), detectSessionInUrl: false }
+      auth: { storage, autoRefreshToken: true, persistSession: Boolean(storage), detectSessionInUrl: Platform.OS === 'web' }
     })
   : null;

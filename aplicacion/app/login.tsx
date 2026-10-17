@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
+import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -12,34 +13,83 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [isResending, setIsResending] = useState(false);
+  const requestInFlight = useRef(false);
+  const resendAvailableAt = useRef(0);
+  const isBusy = isSubmitting || isResending;
   const passwordInputRef = useRef<TextInput>(null);
-  const { signIn, isAuthenticated, isLoading } = useSession();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const { signIn, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace('/(tabs)');
-  }, [isAuthenticated, isLoading]);
+    if (isPasswordRecovery) router.replace('/reset-password');
+    else if (!isLoading && isAuthenticated) router.replace('/(tabs)');
+  }, [isAuthenticated, isLoading, isPasswordRecovery]);
 
   const submit = async () => {
+    if (requestInFlight.current) return;
     if (!email.trim() || !password) {
       setErrorMessage('Ingresa tu correo electrónico y contraseña.');
       return;
     }
 
+    requestInFlight.current = true;
     setErrorMessage('');
+    setNotice('');
     setIsSubmitting(true);
     try {
       await signIn(email, password);
-      router.replace('/(tabs)');
+      if (mounted.current) router.replace('/(tabs)');
     } catch (error) {
+      if (!mounted.current) return;
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
       const message = error instanceof Error ? error.message.toLowerCase() : '';
-      if (message.includes('invalid login credentials')) setErrorMessage('El correo o la contraseña no son correctos.');
-      else if (message.includes('email not confirmed')) setErrorMessage('Confirma tu correo electrónico antes de ingresar.');
+      if (code === 'email_not_confirmed' || message.includes('email not confirmed')) setErrorMessage('Para ingresar, confirma tu correo mediante el enlace de verificación. Revisa tu bandeja de entrada y spam o solicita otro correo con el botón de abajo.');
+      else if (code === 'invalid_credentials' || message.includes('invalid login credentials')) setErrorMessage('No fue posible iniciar sesión con esos datos. Revisa tu correo y contraseña; si necesitas confirmar el correo, puedes solicitar un enlace abajo.');
+      else if (code === 'over_request_rate_limit' || code === 'over_email_send_rate_limit') setErrorMessage('Se alcanzó el límite de solicitudes. Espera unos minutos e inténtalo de nuevo.');
       else if (message.includes('failed to fetch') || message.includes('network')) setErrorMessage('No fue posible conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.');
       else setErrorMessage('No fue posible iniciar sesión. Inténtalo nuevamente.');
     } finally {
-      setIsSubmitting(false);
+      requestInFlight.current = false;
+      if (mounted.current) setIsSubmitting(false);
+    }
+  };
+
+  const resendConfirmation = async () => {
+    if (requestInFlight.current) return;
+    setErrorMessage('');
+    setNotice('');
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setErrorMessage('Ingresa un correo electrónico válido para solicitar la confirmación.');
+      return;
+    }
+    if (Date.now() < resendAvailableAt.current) {
+      setErrorMessage('Espera al menos un minuto desde la última solicitud antes de reenviar el correo.');
+      return;
+    }
+    requestInFlight.current = true;
+    setIsResending(true);
+    resendAvailableAt.current = Date.now() + 60_000;
+    try {
+      if (!supabase) throw new Error('Supabase no está configurado.');
+      const { error } = await supabase.auth.resend({ type: 'signup', email: normalizedEmail });
+      if (error) throw error;
+      if (!mounted.current) return;
+      setNotice('Solicitud de confirmación recibida. Si corresponde confirmar este correo, recibirás un enlace. Revisa tu bandeja de entrada y spam; después de confirmar, vuelve a iniciar sesión.');
+    } catch (error) {
+      if (!mounted.current) return;
+      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+      const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+      if (status === 429 || code === 'over_email_send_rate_limit' || code === 'over_request_rate_limit') setErrorMessage('Se alcanzó el límite de solicitudes. Espera unos minutos antes de intentar nuevamente.');
+      else setErrorMessage('No fue posible solicitar el correo de confirmación. Revisa tu conexión o inténtalo más tarde. Si el problema continúa, contacta al administrador.');
+    } finally {
+      requestInFlight.current = false;
+      if (mounted.current) setIsResending(false);
     }
   };
 
@@ -68,29 +118,33 @@ export default function LoginScreen() {
             <TextInput
               style={styles.input}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(value) => { setEmail(value); setErrorMessage(''); setNotice(''); }}
               autoCapitalize="none"
               keyboardType="email-address"
               placeholder="correo@zacapp.gt"
               placeholderTextColor={colors.muted}
-              editable={!isSubmitting}
+              editable={!isBusy}
               onSubmitEditing={() => passwordInputRef.current?.focus()}
             />
 
             <Text style={styles.label}>Contraseña</Text>
             <View style={styles.passwordField}>
-              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isBusy} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
+            {notice ? <View style={styles.secureNote}><Text accessibilityLiveRegion="polite" style={styles.helpText}>{notice}</Text></View> : null}
 
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
               onPress={submit}
+              disabled={isBusy}
             />
-            <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
+            <AppButton label={isResending ? 'Solicitando correo...' : 'Reenviar correo de confirmación'} variant="secondary" icon="mail-outline" disabled={isBusy} onPress={resendConfirmation} />
+            <AppButton label="¿Olvidaste tu contraseña?" variant="ghost" icon="key-outline" disabled={isBusy} onPress={() => router.push('/forgot-password')} />
+            <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" disabled={isBusy} onPress={() => router.push('/register')} />
             <View style={styles.secureNote}><Ionicons name="shield-checkmark-outline" size={17} color={colors.secondary} /><Text style={styles.secureNoteText}>Acceso protegido mediante Supabase Auth.</Text></View>
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
           </View>
