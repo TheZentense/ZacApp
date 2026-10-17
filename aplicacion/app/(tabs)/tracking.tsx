@@ -40,7 +40,7 @@ export default function TrackingScreen() {
   const permissions = workflowPermissionsFor(databaseRole);
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload, isPreview } = useReports();
-  const pending = reportReadScopeFor(databaseRole) === 'pending' && (!isPreview || permissions.operator);
+  const pending = reportReadScopeFor(databaseRole) === 'pending' && !isPreview;
   const [category, setCategory] = useState('Todas');
   const [selectedItem, setSelected] = useState<Incident | null>(null);
   const selected = pending || isPreview ? null : availableIncidents.find((item) => item.id === selectedItem?.id) ?? null;
@@ -94,7 +94,7 @@ export default function TrackingScreen() {
     setEvidenceLoading(false);
   };
 
-  if (pending) return <ScrollView contentContainerStyle={styles.page}><Text style={styles.historyTitle}>Seguimiento personal pendiente</Text><Text style={styles.historyMuted}>La consulta personal estará disponible cuando se habiliten las asignaciones.</Text></ScrollView>;
+  if (pending) return <ScrollView contentContainerStyle={styles.page}><Text style={styles.historyTitle}>Seguimiento no disponible</Text><Text style={styles.historyMuted}>Esta cuenta todavía no tiene una consulta de reportes habilitada.</Text></ScrollView>;
 
   return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}>
     <View style={[styles.header, { backgroundColor: visual.primary }]}>

@@ -2,8 +2,6 @@ import type { UserRole as DatabaseRole } from '@/types/domain';
 
 export type VisualRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 
-export const personalTasksPendingMessage = 'La bandeja personal está pendiente de habilitación segura. Todavía no se muestran tareas para esta cuenta.';
-
 // Proposed responsibilities, pending team confirmation. Never derive permissions from a visual role.
 export function workflowPermissionsFor(databaseRole: unknown) {
   return {
@@ -14,10 +12,11 @@ export function workflowPermissionsFor(databaseRole: unknown) {
   };
 }
 
-export function reportReadScopeFor(databaseRole: unknown): 'general' | 'department' | 'citizen' | 'pending' {
+export function reportReadScopeFor(databaseRole: unknown): 'general' | 'department' | 'personal' | 'citizen' | 'pending' {
   const permissions = workflowPermissionsFor(databaseRole);
   if (permissions.generalReports) return 'general';
   if (permissions.departmentReports) return 'department';
+  if (permissions.operator) return 'personal';
   if (permissions.citizenReports) return 'citizen';
   return 'pending';
 }

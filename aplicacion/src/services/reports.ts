@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { isIncidentPriority, type Incident, type IncidentPriority, type IncidentStatus, type MaintenanceDepartment } from '@/types/domain';
 import { readEvidenceBytes } from '@/services/evidenceImages';
 import { requireBackendCapability } from '@/lib/backendCapabilities';
-import { personalTasksPendingMessage, reportReadScopeFor } from '@/services/sessionPolicy';
+import { reportReadScopeFor } from '@/services/sessionPolicy';
 import * as Crypto from 'expo-crypto';
 
 type CreateReportInput = {
@@ -44,6 +44,19 @@ export type ReportEvidence = {
   mimeType: string;
   createdAt: string;
 };
+
+function evidencePathMatchesRecord(storagePath: string, uploadedBy: string, incidentId: string) {
+  const parts = storagePath.split('/');
+  const isSafe = parts.every((part) => Boolean(part) && part !== '.' && part !== '..');
+  if (!isSafe) return false;
+  const legacyPath = parts.length === 3 && parts[0] === uploadedBy && parts[1] === incidentId;
+  const organizedPath = parts.length === 8
+    && parts[0] === 'reportes'
+    && parts[5] === incidentId
+    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
+    && parts[7].toLowerCase().endsWith('.jpg');
+  return legacyPath || organizedPath;
+}
 
 type CategoryStorageRow = {
   id: number;
@@ -295,7 +308,7 @@ async function requireReportReadAccess() {
   const { data: profile, error } = await supabase.from('profiles').select('role, department_id').eq('id', auth.user.id).single();
   if (error || !profile) throw new Error('No fue posible verificar tu perfil.');
   const scope = reportReadScopeFor(profile.role);
-  if (scope === 'pending') throw new Error(personalTasksPendingMessage);
+  if (scope === 'pending') throw new Error('Esta cuenta todavía no tiene una consulta de reportes habilitada.');
   const departmentId = profile.department_id;
   if (scope === 'department' && (typeof departmentId !== 'number' || !Number.isSafeInteger(departmentId) || departmentId <= 0)) {
     throw new Error('Tu perfil no tiene un departamento verificado.');
@@ -308,6 +321,7 @@ async function requireVisibleReport(incidentId: string) {
   let query = client.from('incidents').select('id').eq('id', incidentId);
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  if (scope === 'personal') query = query.eq('assigned_to', userId);
   const { data, error } = await query.single();
   if (error || !data) throw new Error('El reporte no está disponible para esta sesión.');
   return client;
@@ -320,6 +334,7 @@ export async function listReports(): Promise<Incident[]> {
     .select('id, code, title, description, address_reference, latitude, longitude, reporter_name, reporter_email, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  if (scope === 'personal') query = query.eq('assigned_to', userId);
   const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) throw error;
@@ -429,8 +444,7 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
 
   return Promise.all((data ?? []).map(async (item) => {
     const storedValue = item.storage_path as string;
-    const parts = typeof storedValue === 'string' ? storedValue.split('/') : [];
-    if (parts.length !== 3 || parts[0] !== item.uploaded_by || parts[1] !== incidentId || !parts[2] || parts.some((part) => part === '.' || part === '..')) {
+    if (typeof storedValue !== 'string' || !evidencePathMatchesRecord(storedValue, item.uploaded_by, incidentId)) {
       throw new Error('La ruta de evidencia necesita revisión.');
     }
     const { data: signedData, error: signedError } = await client.storage
