@@ -8,7 +8,9 @@ const ts = require('typescript');
 // All backend and image calls are doubles. This runner never loads .env or a real Supabase client.
 function loader(overrides = {}, globals = {}) {
   const cache = new Map();
+  let uuidSequence = 0;
   const nativeDoubles = {
+    'expo-crypto': { randomUUID: () => `00000000-0000-4000-8000-${String(++uuidSequence).padStart(12, '0')}` },
     'react-native': { Platform: { OS: 'android' } },
     'expo-file-system': { File: class { constructor() { throw new Error('Local file access must be mocked'); } } },
     'expo-image-picker': {},
@@ -65,14 +67,18 @@ function clientDouble(resolveQuery = () => ({ data: [], error: null }), options 
       return chain;
     },
     storage: { from(bucket) { return {
-      upload: async (storagePath, bytes, config) => { calls.push({ operation: 'upload', bucket, storagePath, size: bytes.byteLength, config }); return { error: null }; },
+      upload: async (storagePath, bytes, config) => { calls.push({ operation: 'upload', bucket, storagePath, size: bytes.byteLength, config }); return options.upload ? options.upload(storagePath, bytes, config) : { error: null }; },
       createSignedUrl: async (storagePath, ttl) => { calls.push({ operation: 'sign', bucket, storagePath, ttl }); return { data: { signedUrl: 'https://example.invalid/signed-image' }, error: null }; },
-      remove: async (storagePaths) => { calls.push({ operation: 'remove', bucket, storagePaths }); return { error: null }; }
+      remove: async (paths) => {
+        if (!options.remove) throw new Error('Unverified cleanup must not execute');
+        calls.push({ operation: 'remove', bucket, paths: [...paths] });
+        return options.remove(paths);
+      }
     }; } },
-    rpc: async (name, values) => {
-      calls.push({ operation: 'rpc', name, values });
-      if (options.rpc) return options.rpc(name, values);
-      throw new Error('Unverified RPC must not execute');
+    rpc: async (name, parameters) => {
+      if (!options.rpc) throw new Error('Unverified RPC must not execute');
+      calls.push({ operation: 'rpc', name, parameters });
+      return options.rpc(name, parameters);
     }
   };
   Object.assign(client.auth, options.auth);
@@ -82,6 +88,116 @@ function clientDouble(resolveQuery = () => ({ data: [], error: null }), options 
 function reportsFixture(priority) {
   return { id: 'incident', code: 'ZAC-1', title: 'Reporte real', description: 'Detalle', address_reference: 'Zona', status: 'REGISTRADO', priority, assigned_to: null, created_at: '2026-10-15T12:00:00Z', updated_at: '2026-10-15T12:00:00Z', category: { name: 'Agua potable' } };
 }
+
+function creationClientDouble(options = {}) {
+  return clientDouble((query) => {
+    assert.equal(query.table, 'categories', 'Creation must not access incident tables directly');
+    assert.equal(query.operation, 'select');
+    return { data: query.single ? { id: 1, department: { code: 'AGUA' } } : [{ id: 1, name: 'Agua potable' }], error: null };
+  }, {
+    remove: async () => ({ error: null }),
+    rpc: async (name, parameters) => {
+      assert.equal(name, 'create_incident_with_evidence');
+      return { data: [{ id: parameters.p_incident_id, code: 'ZAC-2026-000003' }], error: null };
+    },
+    ...options
+  });
+}
+
+function reportInput(count = 1) {
+  return {
+    categoryId: 1, description: '  Falla de prueba local  ', location: '  Ubicación local  ', latitude: 14.97, longitude: -89.53,
+    evidence: Array.from({ length: count }, (_, index) => ({ uri: `file:///cache/photo-${index}.jpg`, mimeType: 'image/jpeg' }))
+  };
+}
+
+class LocalPhotoDouble {
+  exists = true;
+  size = 64;
+  async arrayBuffer() { return new ArrayBuffer(64); }
+}
+
+function reportsWithPhotos(client, File = LocalPhotoDouble) {
+  return loader({ '@/lib/supabase': { supabase: client }, 'expo-file-system': { File } })('src/services/reports.ts');
+}
+
+test('creation uploads one to five JPEGs before a single atomic RPC without direct inserts or client identity fields', async () => {
+  for (const count of [1, 5]) {
+    const { client, calls } = creationClientDouble();
+    const result = await reportsWithPhotos(client).createReport(reportInput(count));
+    const uploads = calls.filter((call) => call.operation === 'upload');
+    const rpcs = calls.filter((call) => call.operation === 'rpc');
+    assert.equal(uploads.length, count);
+    assert.equal(rpcs.length, 1);
+    assert.equal(calls.at(-1), rpcs[0]);
+    const { name, parameters } = rpcs[0];
+    assert.equal(name, 'create_incident_with_evidence');
+    assert.equal(result.id, parameters.p_incident_id);
+    assert.equal(result.code, 'ZAC-2026-000003');
+    assert.match(result.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(JSON.parse(JSON.stringify(parameters)), {
+      p_incident_id: result.id, p_category_id: 1, p_description: 'Falla de prueba local', p_address_reference: 'Ubicación local',
+      p_latitude: 14.97, p_longitude: -89.53, p_storage_paths: uploads.map((upload) => upload.storagePath), p_mime_type: 'image/jpeg'
+    });
+    for (const [index, upload] of uploads.entries()) {
+      assert.match(upload.storagePath, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\//);
+      const filename = index === 0 ? 'evidencia-inicial.jpg' : `evidencia-adicional-${String(index + 1).padStart(2, '0')}.jpg`;
+      assert.ok(upload.storagePath.endsWith(`/${result.id}/ciudadano-owner/${filename}`));
+      assert.equal(upload.bucket, 'incidente-evidencia');
+      assert.equal(upload.size, 64);
+      assert.equal(upload.config.contentType, 'image/jpeg');
+      assert.equal(upload.config.upsert, false);
+    }
+    const category = calls.find((call) => call.table === 'categories');
+    assert.ok(category.filters.some(([key, value]) => key === 'id' && value === 1));
+    assert.ok(category.filters.some(([key, value]) => key === 'active' && value === true));
+    assert.ok(!calls.some((call) => ['insert', 'update', 'remove', 'sign'].includes(call.operation)));
+  }
+});
+
+test('creation rejects unauthenticated users and invalid evidence before storage or RPC', async () => {
+  for (const scenario of ['anonymous', 'auth-error', 'empty', 'too-many', 'non-jpeg']) {
+    const { client, calls } = creationClientDouble({ auth: {
+      getUser: async () => ({ data: { user: scenario === 'anonymous' ? null : { id: 'owner' } }, error: scenario === 'auth-error' ? { message: 'Expired session' } : null })
+    } });
+    const input = reportInput(scenario === 'empty' ? 0 : scenario === 'too-many' ? 6 : 1);
+    if (scenario === 'non-jpeg') input.evidence[0].mimeType = 'image/png';
+    await assert.rejects(reportsWithPhotos(client).createReport(input), /Inicia sesión|una y cinco fotografías JPEG/);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('partial creation failures remove only uploaded photos and never call the creation RPC', async () => {
+  for (const failure of ['read', 'upload']) {
+    let reads = 0;
+    let uploads = 0;
+    const { client, calls } = creationClientDouble({ upload: async () => ({ error: ++uploads === 2 && failure === 'upload' ? { message: 'Upload denied' } : null }) });
+    const reports = reportsWithPhotos(client, class extends LocalPhotoDouble {
+      async arrayBuffer() { if (++reads === 2 && failure === 'read') throw new Error('Photo unavailable'); return super.arrayBuffer(); }
+    });
+    await assert.rejects(reports.createReport(reportInput(3)), (error) => /leer la fotografía|Upload denied/.test(error.message));
+    const uploaded = calls.filter((call) => call.operation === 'upload');
+    const cleanup = calls.filter((call) => call.operation === 'remove');
+    assert.equal(uploaded.length, failure === 'read' ? 1 : 2);
+    assert.equal(cleanup.length, 1);
+    assert.equal(cleanup[0].bucket, 'incidente-evidencia');
+    assert.deepEqual(cleanup[0].paths, [uploaded[0].storagePath]);
+    assert.ok(!calls.some((call) => ['rpc', 'insert', 'update'].includes(call.operation)));
+  }
+});
+
+test('creation RPC errors or empty results clean every uploaded photo without falling back to inserts', async () => {
+  for (const response of [{ data: null, error: { message: 'Creation denied' } }, { data: [], error: null }]) {
+    const { client, calls } = creationClientDouble({ rpc: async () => response });
+    await assert.rejects(reportsWithPhotos(client).createReport(reportInput(2)), /Creation denied|No fue posible registrar/);
+    assert.equal(calls.filter((call) => call.operation === 'rpc').length, 1);
+    const cleanup = calls.filter((call) => call.operation === 'remove');
+    assert.equal(cleanup.length, 1);
+    assert.deepEqual(cleanup[0].paths, calls.filter((call) => call.operation === 'upload').map((call) => call.storagePath));
+    assert.equal(calls.at(-1), cleanup[0]);
+    assert.ok(!calls.some((call) => call.operation === 'insert' || call.operation === 'update'));
+  }
+});
 
 test('workflow permissions come from the verified database role, never the shared visual role', () => {
   const policy = loader()('src/services/sessionPolicy.ts');
@@ -365,7 +481,8 @@ test('staff evidence is uploaded and linked only after the incident is visible',
 test('citizen evidence uses existing columns and preserves the incident when linking fails', async () => {
   const { client, calls } = clientDouble((query) => query.operation === 'insert'
     ? { data: null, error: { message: 'Link denied' } }
-    : { data: { id: 'incident', citizen_id: 'owner', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null });
+    : { data: { id: 'incident', citizen_id: 'owner', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null },
+  { remove: async () => ({ error: null }) });
   const reports = loader({
     '@/lib/supabase': { supabase: client },
     'expo-file-system': { File: class { exists = true; size = 64; async arrayBuffer() { return new ArrayBuffer(64); } } }
@@ -374,8 +491,16 @@ test('citizen evidence uses existing columns and preserves the incident when lin
   const insert = calls.find((call) => call.operation === 'insert');
   assert.equal(insert.table, 'incident_evidence');
   assert.deepEqual(Object.keys(insert.values).sort(), ['evidence_kind', 'file_type', 'file_url', 'incident_id', 'mime_type', 'storage_path', 'uploaded_by']);
-  assert.match(insert.values.storage_path, /^reportes\/.+\/categoria-/);
-  assert.equal(calls.filter((call) => call.operation === 'remove').length, 1);
+  assert.match(insert.values.storage_path, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/incident\/ciudadano-owner\/evidencia-[^/]+\.jpg$/);
+  assert.equal(insert.values.incident_id, 'incident');
+  assert.equal(insert.values.uploaded_by, 'owner');
+  assert.equal(insert.values.evidence_kind, 'OTRA');
+  assert.equal(insert.values.file_url, insert.values.storage_path);
+  assert.equal(insert.values.mime_type, 'image/jpeg');
+  assert.equal(insert.values.file_type, 'image/jpeg');
+  const cleanup = calls.find((call) => call.operation === 'remove');
+  assert.equal(cleanup.bucket, 'incidente-evidencia');
+  assert.deepEqual(cleanup.paths, [insert.values.storage_path]);
   assert.ok(!calls.some((call) => call.operation === 'update' || (call.operation === 'insert' && call.table === 'incidents')));
 });
 
@@ -395,13 +520,156 @@ test('invisible incidents never generate signed storage URLs', async () => {
   assert.ok(!calls.some((call) => call.operation === 'sign' || call.table === 'incident_evidence'));
 });
 
-test('valid evidence receives a private URL lasting fifteen minutes', async () => {
+test('valid legacy evidence receives a private URL lasting fifteen minutes', async () => {
   const { client, calls } = clientDouble((query) => query.table === 'incidents'
     ? { data: { id: 'incident' }, error: null }
     : { data: [{ id: 'photo', storage_path: 'owner/incident/photo.jpg', uploaded_by: 'owner', mime_type: 'image/jpeg', created_at: '2026-10-15T12:00:00Z' }], error: null });
   const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
   assert.equal((await reports.listReportEvidence('incident')).length, 1);
   assert.equal(calls.find((call) => call.operation === 'sign').ttl, 900);
+});
+
+const evidenceIncidentId = '11111111-1111-4111-8111-111111111111';
+const evidenceUploaderId = '22222222-2222-4222-8222-222222222222';
+const otherEvidenceId = '33333333-3333-4333-8333-333333333333';
+const organizedEvidencePath = `reportes/AGUA/categoria-1/2026/10/${evidenceIncidentId}/ciudadano-${evidenceUploaderId}/evidencia-inicial.jpg`;
+
+function evidenceReadDouble(rows, options = {}, incidentId = evidenceIncidentId) {
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'incidents') return { data: { id: incidentId }, error: null };
+    assert.equal(query.table, 'incident_evidence');
+    return { data: rows, error: null };
+  }, options);
+  return { calls, reports: reportsWithPhotos(client) };
+}
+
+function evidenceRow(storagePath, uploadedBy = evidenceUploaderId) {
+  return { id: 'photo', storage_path: storagePath, uploaded_by: uploadedBy, mime_type: 'image/jpeg', created_at: '2026-10-15T12:00:00Z' };
+}
+
+test('organized citizen and staff evidence retain exact uploader provenance and fifteen-minute private URLs', async () => {
+  for (const actor of ['ciudadano', 'personal']) {
+    for (const filename of ['evidencia-inicial.jpg', 'evidencia-adicional-02.jpg', `evidencia-1790000000000-${otherEvidenceId}.jpg`]) {
+      const storagePath = `reportes/AGUA_POTABLE-2/categoria-123/2025/12/${evidenceIncidentId}/${actor}-${evidenceUploaderId}/${filename}`;
+      // An administrator may view evidence uploaded by someone other than the current user.
+      const { reports, calls } = evidenceReadDouble([evidenceRow(storagePath)], { profile: { role: 'administrador', department_id: null } });
+      const result = await reports.listReportEvidence(evidenceIncidentId);
+      assert.equal(result.length, 1);
+      assert.equal(result[0].id, 'photo');
+      assert.equal(result[0].url, 'https://example.invalid/signed-image');
+      assert.equal(result[0].mimeType, 'image/jpeg');
+      assert.deepEqual(calls.filter((call) => call.operation === 'sign'), [{ operation: 'sign', bucket: 'incidente-evidencia', storagePath, ttl: 900 }]);
+      assert.ok(calls.find((call) => call.table === 'incident_evidence').filters.some(([key, value]) => key === 'incident_id' && value === evidenceIncidentId));
+    }
+  }
+});
+
+test('legacy and organized evidence can coexist on the same visible report', async () => {
+  const paths = [
+    `${evidenceUploaderId}/${evidenceIncidentId}/photo.jpg`,
+    organizedEvidencePath,
+    organizedEvidencePath.replace('ciudadano-', 'personal-')
+  ];
+  const { reports, calls } = evidenceReadDouble(paths.map((storagePath) => evidenceRow(storagePath)));
+  assert.equal((await reports.listReportEvidence(evidenceIncidentId)).length, 3);
+  const signed = calls.filter((call) => call.operation === 'sign');
+  assert.deepEqual(signed.map((call) => call.storagePath), paths);
+  assert.ok(signed.every((call) => call.ttl === 900 && call.bucket === 'incidente-evidencia'));
+  assert.ok(calls.indexOf(calls.find((call) => call.table === 'incidents')) < calls.indexOf(calls.find((call) => call.table === 'incident_evidence')));
+});
+
+test('evidence validation rejects malformed, foreign and encoded paths before signing any URL', async () => {
+  const legacy = `${evidenceUploaderId}/${evidenceIncidentId}/photo.jpg`;
+  const invalidPaths = [
+    undefined, null, 123, {}, '',
+    `/${legacy}`, `${legacy}/`, `${legacy}/extra.jpg`,
+    legacy.replace('/photo.jpg', '//photo.jpg'),
+    legacy.replace(evidenceUploaderId, otherEvidenceId),
+    legacy.replace(evidenceIncidentId, otherEvidenceId),
+    legacy.replace('photo.jpg', '.'), legacy.replace('photo.jpg', '..'),
+    legacy.replace('photo.jpg', '../photo.jpg'), legacy.replace('photo.jpg', './photo.jpg'),
+    legacy.replace('photo.jpg', '%2e%2e'), legacy.replace('photo.jpg', '%252e%252e'),
+    legacy.replace('photo.jpg', 'photo%2fother.jpg'), legacy.replace('photo.jpg', 'photo%5cother.jpg'),
+    legacy.replace('photo.jpg', 'photo\\other.jpg'), legacy.replace('photo.jpg', 'photo.jpg?download=1'),
+    legacy.replace('photo.jpg', 'photo.jpg#fragment'), legacy.replace('photo.jpg', 'photo\0.jpg'),
+    legacy.replace('photo.jpg', 'photo.jpg\n'), legacy.replace('photo.jpg', 'https:photo.jpg'),
+    `https://example.invalid/${legacy}`, ` ${legacy}`, `${legacy} `,
+    organizedEvidencePath.replace('reportes/', 'reports/'),
+    organizedEvidencePath.replace('/AGUA/', '//'), organizedEvidencePath.replace('/AGUA/', '/agua/'),
+    organizedEvidencePath.replace('/AGUA/', '/../'), organizedEvidencePath.replace('/AGUA/', '/./'),
+    organizedEvidencePath.replace('categoria-1', 'categoria-0'), organizedEvidencePath.replace('categoria-1', 'categoria--1'),
+    organizedEvidencePath.replace('categoria-1', 'categoria-01'), organizedEvidencePath.replace('categoria-1', 'categoria-x'),
+    organizedEvidencePath.replace('/2026/', '/26/'), organizedEvidencePath.replace('/2026/', '/0000/'),
+    organizedEvidencePath.replace('/10/', '/00/'), organizedEvidencePath.replace('/10/', '/13/'),
+    organizedEvidencePath.replace('/10/', '/1/'), organizedEvidencePath.replace('/10/', '//'),
+    organizedEvidencePath.replace(evidenceIncidentId, otherEvidenceId),
+    organizedEvidencePath.replace(evidenceUploaderId, otherEvidenceId),
+    organizedEvidencePath.replace('ciudadano-', 'personal-').replace(evidenceUploaderId, otherEvidenceId),
+    organizedEvidencePath.replace('ciudadano-', 'administrador-'),
+    organizedEvidencePath.replace('ciudadano-', ''),
+    organizedEvidencePath.replace(evidenceUploaderId, `${evidenceUploaderId}-extra`),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '//evidencia-inicial.jpg'),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '/..'),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '/%2E%2E'),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '/photo%252fother.jpg'),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '/photo\\other.jpg'),
+    organizedEvidencePath.replace('/evidencia-inicial.jpg', '/photo.jpg\r\n'),
+    organizedEvidencePath.replace('.jpg', '.png'), organizedEvidencePath.replace('.jpg', '.jpg/extra'),
+    organizedEvidencePath.replace('evidencia-inicial.jpg', '')
+  ];
+  const scenarios = invalidPaths.map((storagePath) => ({ storagePath }));
+  for (const uploadedBy of [undefined, null, '', 123, otherEvidenceId, `ciudadano-${evidenceUploaderId}`, `${evidenceUploaderId}/extra`]) {
+    scenarios.push({ storagePath: legacy, uploadedBy }, { storagePath: organizedEvidencePath, uploadedBy });
+  }
+  scenarios.push(
+    { storagePath: organizedEvidencePath.replace(evidenceIncidentId, 'not-a-uuid'), incidentId: 'not-a-uuid' },
+    { storagePath: organizedEvidencePath.replace(evidenceUploaderId, 'not-a-uuid'), uploadedBy: 'not-a-uuid' }
+  );
+  for (const scenario of scenarios) {
+    const uploadedBy = Object.hasOwn(scenario, 'uploadedBy') ? scenario.uploadedBy : evidenceUploaderId;
+    const incidentId = scenario.incidentId ?? evidenceIncidentId;
+    const invalidRow = { ...evidenceRow(scenario.storagePath), uploaded_by: uploadedBy };
+    // A valid preceding row must not cause partial signing of a rejected response.
+    const validLegacyPath = `${evidenceUploaderId}/${incidentId}/photo.jpg`;
+    const { reports, calls } = evidenceReadDouble([evidenceRow(validLegacyPath), invalidRow], {}, incidentId);
+    await assert.rejects(reports.listReportEvidence(incidentId), /ruta de evidencia/, JSON.stringify(scenario));
+    assert.ok(!calls.some((call) => call.operation === 'sign'), JSON.stringify(scenario));
+  }
+});
+
+test('incident visibility restrictions finish before reading evidence or signing either path format', async () => {
+  for (const role of ['ciudadano', 'mantenimiento', 'administrador']) {
+    const visibility = deferred();
+    const { client, calls } = clientDouble((query) => {
+      if (query.table === 'incidents') return visibility.promise;
+      assert.fail('Evidence cannot be read before incident visibility is verified');
+    }, { profile: { role, department_id: 7 } });
+    const reports = reportsWithPhotos(client);
+    const pending = reports.listReportEvidence(evidenceIncidentId);
+    const rejected = assert.rejects(pending, /no está disponible/);
+    await new Promise(setImmediate);
+    const query = calls.find((call) => call.table === 'incidents');
+    assert.ok(query.filters.some(([key, value]) => key === 'id' && value === evidenceIncidentId));
+    if (role === 'ciudadano') assert.ok(query.filters.some(([key, value]) => key === 'citizen_id' && value === 'owner'));
+    if (role === 'mantenimiento') assert.ok(query.filters.some(([key, value]) => key === 'assigned_department_id' && value === 7));
+    assert.ok(!calls.some((call) => call.table === 'incident_evidence' || call.operation === 'sign'));
+    visibility.resolve({ data: null, error: null });
+    await rejected;
+    assert.ok(!calls.some((call) => call.table === 'incident_evidence' || call.operation === 'sign'));
+  }
+});
+
+test('paths generated during multi-photo creation can be read without rewriting the stored keys', async () => {
+  const { client, calls } = creationClientDouble({ auth: {
+    getUser: async () => ({ data: { user: { id: evidenceUploaderId } }, error: null })
+  } });
+  const incident = await reportsWithPhotos(client).createReport(reportInput(5));
+  const storagePaths = calls.find((call) => call.operation === 'rpc').parameters.p_storage_paths;
+  const reading = evidenceReadDouble(Array.from(storagePaths, (storagePath) => evidenceRow(storagePath)), {}, incident.id);
+  assert.equal((await reading.reports.listReportEvidence(incident.id)).length, 5);
+  const signed = reading.calls.filter((call) => call.operation === 'sign');
+  assert.deepEqual(signed.map((call) => call.storagePath), Array.from(storagePaths));
+  assert.ok(signed.every((call) => call.ttl === 900 && call.bucket === 'incidente-evidencia'));
 });
 
 function deferred() {
@@ -432,18 +700,25 @@ test('report reloads ignore older responses and responses arriving after blur', 
 });
 
 test('photo optimization avoids enlarging small images and compresses large JPEGs', async () => {
-  for (const width of [800, 2400]) {
+  for (const [width, height] of [[800, 600], [600, 800], [1600, 1200], [1200, 1600], [2400, 1800], [1800, 2400], [2400, 2400]]) {
     const resized = [];
     const saved = [];
-    const image = { width, height: 600, saveAsync: async (options) => { saved.push(options); return { uri: 'local://optimized' }; } };
+    const image = { width, height, saveAsync: async (options) => { saved.push(options); return { uri: 'local://optimized' }; } };
     const module = loader({
       'expo-image-picker': {},
       'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => image, resize: (size) => resized.push(size) }) } }
     })('src/services/evidenceImages.ts');
-    assert.equal((await module.optimizeEvidence('local://source')).mimeType, 'image/jpeg');
-    assert.equal(resized.length, width > 1600 ? 1 : 0);
-    if (width > 1600) assert.equal(resized[0].width, 1600);
+    const result = await module.optimizeEvidence('local://source');
+    assert.equal(result.mimeType, 'image/jpeg');
+    assert.equal(result.uri, 'local://optimized');
+    assert.equal(resized.length, Math.max(width, height) > 1600 ? 1 : 0);
+    if (resized.length) {
+      assert.equal(resized[0].width, width >= height ? 1600 : null);
+      assert.equal(resized[0].height, width >= height ? null : 1600);
+    }
+    assert.equal(saved.length, 1);
     assert.equal(saved[0].compress, 0.72);
+    assert.equal(saved[0].format, 'jpeg');
   }
 });
 
@@ -495,9 +770,11 @@ test('web photographs retain the fetch path and enforce the same size limit', as
   }
 });
 
-function reportScreenHarness(client, File) {
+function reportScreenHarness(client, File, options = {}) {
   const slots = [];
   const effects = [];
+  const alerts = [];
+  const locationCalls = [];
   let index = 0;
   const jsx = (type, props) => ({ type, props });
   const native = Object.fromEntries(['Image', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map((name) => [name, name]));
@@ -513,20 +790,29 @@ function reportScreenHarness(client, File) {
       useEffect(callback) { const slot = index++; if (!(slot in slots)) { slots[slot] = true; effects.push(callback); } }
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'react-native': { ...native, Platform: { OS: 'android' }, Alert: { alert() { throw new Error('Unexpected alert'); } }, StyleSheet: { create: (value) => value } },
+    'react-native': { ...native, Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, StyleSheet: { create: (value) => value } },
     'expo-file-system': { File },
     'expo-router': { Redirect: 'Redirect', router: {} },
     'expo-camera': { CameraView: 'CameraView', useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] },
+    'expo-location': {
+      Accuracy: { High: 'high' },
+      requestForegroundPermissionsAsync: async () => { locationCalls.push('permission'); return { granted: options.locationGranted ?? true }; },
+      getCurrentPositionAsync: async (config) => {
+        locationCalls.push(config);
+        if (options.locationError) throw new Error('GPS unavailable');
+        return { coords: { latitude: 14.97, longitude: -89.53, accuracy: 12 } };
+      }
+    },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
     '@/components/AppButton': { AppButton: 'AppButton' },
     '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
     '@/lib/supabase': { supabase: client, isSupabaseConfigured: true },
-    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', email: 'ciudadano@zacapp.test', fullName: 'Ciudadano Prueba', isAuthenticated: true, isLoading: false, isPasswordRecovery: false }) },
-    'expo-image-picker': { launchImageLibraryAsync: async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] }) },
-    'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
+    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, ...options.session }) },
+    'expo-image-picker': { launchImageLibraryAsync: options.pickImages ?? (async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] })) },
+    'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, height: 600, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
   });
   const screen = load('app/report/new.tsx').default;
-  return { render() { index = 0; return screen(); }, mount() { return effects.splice(0).map((effect) => effect()); } };
+  return { alerts, locationCalls, render() { index = 0; return screen(); }, mount() { return effects.splice(0).map((effect) => effect()); } };
 }
 
 function nodes(tree) {
@@ -535,20 +821,82 @@ function nodes(tree) {
   return [tree, ...nodes(tree.props?.children)];
 }
 
-test('the report screen submits atomically and blocks overlapping submissions', async () => {
-  const { client, calls } = clientDouble((query) => {
-    if (query.table === 'categories' && query.fields.includes('department:')) return { data: { id: 1, department: { code: 'AGUA' } }, error: null };
-    if (query.table === 'categories') return { data: [{ id: 1, name: 'Agua potable' }], error: null };
-    return { data: null, error: null };
-  }, {
-    rpc: async (name) => {
-      assert.equal(name, 'create_incident_with_evidence');
-      return { data: [{ id: 'new-incident', code: 'ZAC-2026-000003' }], error: null };
+function pressLocation(tree) {
+  return nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Obtener ubicación GPS')).props.onPress();
+}
+
+async function fillReportForm(harness) {
+  harness.render(); harness.mount(); await new Promise(setImmediate);
+  const tree = harness.render();
+  const inputs = nodes(tree).filter((node) => node.type === 'TextInput');
+  inputs[0].props.onChangeText('Falla de prueba local');
+  inputs[1].props.onChangeText('Ubicación local');
+  return harness.render();
+}
+
+test('the screen requires GPS and a photo, and denied or failed location never creates a report', async () => {
+  for (const scenario of ['missing-gps', 'denied', 'unavailable', 'missing-photo']) {
+    const { client, calls } = creationClientDouble();
+    const harness = reportScreenHarness(client, LocalPhotoDouble, { locationGranted: scenario !== 'denied', locationError: scenario === 'unavailable' });
+    let tree = await fillReportForm(harness);
+    if (scenario !== 'missing-gps') await pressLocation(tree);
+    tree = harness.render();
+    const button = nodes(tree).find((node) => node.props?.label === 'Enviar reporte');
+    assert.equal(button.props.disabled, true);
+    await button.props.onPress(); // Validate the guard even for an already queued callback.
+    const titles = harness.alerts.map(([title]) => title);
+    assert.equal(titles.at(-1), scenario === 'missing-photo' ? 'Fotografía requerida' : 'GPS requerido');
+    if (scenario === 'denied') {
+      assert.ok(titles.includes('Permiso requerido'));
+      assert.deepEqual(harness.locationCalls, ['permission']);
+    } else if (scenario === 'unavailable') {
+      assert.ok(titles.includes('No fue posible obtener la ubicación'));
+    }
+    if (scenario === 'missing-photo' || scenario === 'unavailable') {
+      assert.equal(harness.locationCalls[0], 'permission');
+      assert.equal(harness.locationCalls[1].accuracy, 'high');
+    }
+    assert.ok(!calls.some((call) => ['upload', 'rpc', 'insert', 'update'].includes(call.operation)));
+  }
+});
+
+test('the gallery honors the remaining five-photo limit and the screen sends all selected evidence together', async () => {
+  const { client, calls } = creationClientDouble();
+  const selections = [];
+  const harness = reportScreenHarness(client, LocalPhotoDouble, {
+    pickImages: async (config) => {
+      selections.push(config);
+      return { canceled: false, assets: Array.from({ length: selections.length === 1 ? 2 : 5 }, (_, index) => ({ uri: `file:///cache/source-${index}.jpg` })) };
     }
   });
+  let tree = await fillReportForm(harness);
+  await pressLocation(tree);
+  for (let selection = 0; selection < 2; selection++) {
+    tree = harness.render();
+    await nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Elegir de galería')).props.onPress();
+  }
+  assert.deepEqual(selections.map((config) => config.selectionLimit), [5, 3]);
+  assert.ok(selections.every((config) => config.allowsMultipleSelection && !config.allowsEditing));
+  tree = harness.render();
+  assert.equal(nodes(tree).filter((node) => node.props?.accessibilityLabel?.startsWith('Quitar fotografía')).length, 5);
+  assert.ok(!nodes(tree).some((node) => node.props?.children === 'Elegir de galería'));
+  const button = nodes(tree).find((node) => node.props?.label === 'Enviar reporte');
+  assert.equal(button.props.disabled, false);
+  await button.props.onPress();
+  assert.equal(calls.filter((call) => call.operation === 'upload').length, 5);
+  const rpcs = calls.filter((call) => call.operation === 'rpc');
+  assert.equal(rpcs.length, 1);
+  assert.equal(rpcs[0].parameters.p_storage_paths.length, 5);
+  assert.deepEqual(harness.alerts, []);
+});
+
+test('the screen retries creation after a failed photo read and blocks overlapping or queued submits', async () => {
+  const { client, calls } = creationClientDouble();
+  let reads = 0;
+  const pendingRead = deferred();
   const harness = reportScreenHarness(client, class {
     exists = true; size = 64;
-    async arrayBuffer() { return new ArrayBuffer(64); }
+    async arrayBuffer() { if (++reads === 1) throw new Error('Local read failed'); return pendingRead.promise; }
   });
   harness.render(); harness.mount(); await new Promise(setImmediate);
   let tree = harness.render();
@@ -558,25 +906,45 @@ test('the report screen submits atomically and blocks overlapping submissions', 
   assert.equal(cameraContainer.props.children[1].props.style.position, 'absolute');
   const inputs = nodes(tree).filter((node) => node.type === 'TextInput');
   inputs[0].props.onChangeText('Falla de prueba local'); inputs[1].props.onChangeText('Ubicación local');
-  const locationButton = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Obtener ubicación GPS'));
-  await locationButton.props.onPress();
   const gallery = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Elegir de galería'));
   await gallery.props.onPress();
+  await pressLocation(tree);
   tree = harness.render();
+  assert.equal(nodes(tree).find((node) => node.props?.label === 'Enviar reporte').props.disabled, false);
   const submit = nodes(tree).find((node) => node.props?.label === 'Enviar reporte').props.onPress;
-  const firstSubmission = submit();
-  await submit();
-  await firstSubmission;
+  const firstSubmission = submit(); await submit(); await firstSubmission;
+  assert.equal(harness.alerts.length, 1);
+  assert.equal(harness.alerts[0][0], 'No fue posible registrar el reporte');
+  assert.ok(!calls.some((call) => call.operation === 'rpc' || call.operation === 'upload'));
+  tree = harness.render();
+  assert.ok(!nodes(tree).some((node) => node.props?.children === 'REPORTE REGISTRADO'));
+  const retry = nodes(tree).find((node) => node.props?.label === 'Enviar reporte').props.onPress;
+  const retrying = retry(); await retry(); await new Promise(setImmediate);
+  assert.equal(reads, 2);
+  assert.ok(nodes(harness.render()).some((node) => node.props?.label === 'Subiendo 1 fotografía...' && node.props.disabled));
+  pendingRead.resolve(new ArrayBuffer(64)); await retrying;
+  await submit(); await retry(); // Queued callbacks must not create another report after success.
   tree = harness.render();
   assert.ok(nodes(tree).some((node) => node.props?.children === 'ZAC-2026-000003'));
-  assert.equal(calls.filter((call) => call.operation === 'rpc').length, 1);
-  assert.equal(calls.filter((call) => call.table === 'incidents' && call.operation === 'insert').length, 0);
-  assert.equal(calls.filter((call) => call.table === 'incident_evidence' && call.operation === 'insert').length, 0);
+  assert.ok(!nodes(tree).some((node) => node.props?.label === 'Enviar reporte'));
+  assert.equal(reads, 2);
+  assert.ok(!calls.some((call) => call.operation === 'insert' || call.operation === 'update'));
+  const rpcs = calls.filter((call) => call.operation === 'rpc');
+  assert.equal(rpcs.length, 1);
+  assert.equal(rpcs[0].name, 'create_incident_with_evidence');
+  assert.equal(rpcs[0].parameters.p_latitude, 14.97);
+  assert.equal(rpcs[0].parameters.p_longitude, -89.53);
+  assert.equal(rpcs[0].parameters.p_category_id, 1);
+  assert.equal(rpcs[0].parameters.p_description, 'Falla de prueba local');
+  assert.equal(rpcs[0].parameters.p_address_reference, 'Ubicación local');
+  assert.equal(calls.filter((call) => call.operation === 'upload').length, 1);
   const upload = calls.find((call) => call.operation === 'upload');
   assert.equal(upload.bucket, 'incidente-evidencia');
-  assert.match(upload.storagePath, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/00000000-0000-4000-8000-000000000001\/ciudadano-owner\/evidencia-inicial\.jpg$/);
+  assert.ok(upload.storagePath.endsWith(`/${rpcs[0].parameters.p_incident_id}/ciudadano-owner/evidencia-inicial.jpg`));
+  assert.deepEqual(Array.from(rpcs[0].parameters.p_storage_paths), [upload.storagePath]);
   assert.equal(upload.config.contentType, 'image/jpeg');
   assert.equal(upload.config.upsert, false);
+  assert.equal(harness.alerts.length, 1);
 });
 
 function sessionHarness(client) {

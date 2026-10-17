@@ -45,19 +45,6 @@ export type ReportEvidence = {
   createdAt: string;
 };
 
-function evidencePathMatchesRecord(storagePath: string, uploadedBy: string, incidentId: string) {
-  const parts = storagePath.split('/');
-  const isSafe = parts.every((part) => Boolean(part) && part !== '.' && part !== '..');
-  if (!isSafe) return false;
-  const legacyPath = parts.length === 3 && parts[0] === uploadedBy && parts[1] === incidentId;
-  const organizedPath = parts.length === 8
-    && parts[0] === 'reportes'
-    && parts[5] === incidentId
-    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
-    && parts[7].toLowerCase().endsWith('.jpg');
-  return legacyPath || organizedPath;
-}
-
 type CategoryStorageRow = {
   id: number;
   department: { code?: string } | { code?: string }[] | null;
@@ -431,6 +418,27 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
   });
 }
 
+function isEvidenceStoragePath(value: unknown, incidentId: string, uploadedBy: unknown): value is string {
+  if (typeof value !== 'string' || typeof uploadedBy !== 'string' || !uploadedBy) return false;
+  const parts = value.split('/');
+  // Storage keys are literal: never decode or normalize potentially unsafe segments.
+  if (parts.some((part) => !/^[A-Za-z0-9._-]+$/.test(part) || part === '.' || part === '..')) return false;
+
+  if (parts.length === 3) return parts[0] === uploadedBy && parts[1] === incidentId;
+
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  return parts.length === 8
+    && parts[0] === 'reportes'
+    && /^[A-Z0-9_-]+$/.test(parts[1])
+    && /^categoria-[1-9][0-9]*$/.test(parts[2])
+    && /^[0-9]{4}$/.test(parts[3]) && parts[3] !== '0000'
+    && /^(0[1-9]|1[0-2])$/.test(parts[4])
+    && uuid.test(parts[5]) && parts[5] === incidentId
+    && uuid.test(uploadedBy)
+    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
+    && /^[A-Za-z0-9._-]+\.jpg$/.test(parts[7]);
+}
+
 export async function listReportEvidence(incidentId: string): Promise<ReportEvidence[]> {
   const client = await requireVisibleReport(incidentId);
 
@@ -442,11 +450,15 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
 
   if (error) throw error;
 
-  return Promise.all((data ?? []).map(async (item) => {
-    const storedValue = item.storage_path as string;
-    if (typeof storedValue !== 'string' || !evidencePathMatchesRecord(storedValue, item.uploaded_by, incidentId)) {
+  const evidence = data ?? [];
+  for (const item of evidence) {
+    if (!isEvidenceStoragePath(item.storage_path, incidentId, item.uploaded_by)) {
       throw new Error('La ruta de evidencia necesita revisión.');
     }
+  }
+
+  return Promise.all(evidence.map(async (item) => {
+    const storedValue = item.storage_path as string;
     const { data: signedData, error: signedError } = await client.storage
       .from('incidente-evidencia')
       .createSignedUrl(storedValue, 15 * 60);
