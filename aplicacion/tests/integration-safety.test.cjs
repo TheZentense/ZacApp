@@ -244,6 +244,15 @@ test('operator screen displays assigned work without administrative controls', (
   assert.doesNotMatch(labels, /Guardar asignación|Usuarios y accesos|Cerrar reporte/);
 });
 
+test('operator dashboard presents the enabled personal workflow without pending messages', () => {
+  const incident = { ...reportsFixture(2), assignedToId: 'owner', status: 'ASIGNADO' };
+  const tree = workflowScreenHarness('operador', [incident]).render('app/(tabs)/index.tsx');
+  const labels = nodes(tree).flatMap((node) => [node.props?.label, node.props?.title, typeof node.props?.children === 'string' ? node.props.children : '']).join(' ');
+  assert.match(labels, /Trabajo asignado a tu cuenta/);
+  assert.match(labels, /Actividad de mis tareas/);
+  assert.doesNotMatch(labels, /pendiente de habilitación|Consulta personal pendiente/);
+});
+
 test('maintenance views never expose administrative assignment controls', () => {
   const incidents = [
     { ...reportsFixture(1), id: 'one', assignedToId: null, status: 'ASIGNADO' },

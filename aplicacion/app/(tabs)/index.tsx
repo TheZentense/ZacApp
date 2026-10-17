@@ -59,12 +59,12 @@ const dashboards: Record<UserRole, Dashboard> = {
     ], activity: 'Reportes recientes del departamento',
   },
   employee: {
-    title: 'Mis tareas', copy: 'La consulta personal está pendiente de habilitación segura.',
+    title: 'Mis tareas', copy: 'Consulta y actualiza únicamente el trabajo asignado a tu cuenta.',
     actions: [
-      { title: 'Mis tareas', copy: 'Consulta personal pendiente', icon: 'file-tray-full-outline', route: '/reports' },
+      { title: 'Mis tareas', copy: 'Trabajo asignado a tu cuenta', icon: 'file-tray-full-outline', route: '/reports' },
       { title: 'Seguimiento personal', copy: 'Observaciones e historial autorizado', icon: 'git-branch-outline', route: '/tracking' },
       { title: 'Herramientas', copy: 'Funciones del empleado operativo', icon: 'apps-outline', route: '/admin-menu' }
-    ], activity: 'Movimientos del departamento',
+    ], activity: 'Actividad de mis tareas',
   }
 };
 
