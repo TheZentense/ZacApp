@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
@@ -12,6 +12,8 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const { signIn, isAuthenticated, isLoading } = useSession();
   const { width } = useWindowDimensions();
@@ -20,6 +22,21 @@ export default function LoginScreen() {
   useEffect(() => {
     if (!isLoading && isAuthenticated) router.replace('/(tabs)');
   }, [isAuthenticated, isLoading]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  const revealForm = () => {
+    if (!isNativeMobile) return;
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  };
 
   const submit = async () => {
     if (!email.trim() || !password) {
@@ -45,10 +62,16 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, isNativeMobile && styles.scrollContentMobile]} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={[styles.scrollContent, isNativeMobile && styles.scrollContentMobile, isNativeMobile && isKeyboardVisible && styles.scrollContentKeyboard]}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+      >
         <View style={[styles.content, isNativeMobile && styles.contentMobile]}>
-          <View style={[styles.brandPanel, isNativeMobile && styles.brandPanelMobile]}>
+          {!isNativeMobile || !isKeyboardVisible ? <View style={[styles.brandPanel, isNativeMobile && styles.brandPanelMobile]}>
             <View style={[styles.logoMark, isNativeMobile && styles.logoMarkMobile]}>
               <Image source={require('../assets/images/zacapp-logo-dark.png')} style={styles.logoImage} resizeMode="contain" />
             </View>
@@ -59,7 +82,7 @@ export default function LoginScreen() {
               <View style={styles.brandStep}><View style={styles.brandStepIcon}><Ionicons name="camera-outline" size={19} color={colors.primary} /></View><View><Text style={styles.brandStepTitle}>Reporta</Text><Text style={styles.brandStepCopy}>Registra una incidencia desde tu dispositivo.</Text></View></View>
               <View style={styles.brandStep}><View style={styles.brandStepIcon}><Ionicons name="trail-sign-outline" size={19} color={colors.primary} /></View><View><Text style={styles.brandStepTitle}>Consulta</Text><Text style={styles.brandStepCopy}>Sigue el avance de cada solicitud.</Text></View></View>
             </View>}
-          </View>
+          </View> : null}
 
           <View style={[styles.card, isNativeMobile && styles.cardMobile]}>
             <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Bienvenido</Text>
@@ -76,11 +99,13 @@ export default function LoginScreen() {
               placeholderTextColor={colors.muted}
               editable={!isSubmitting}
               onSubmitEditing={() => passwordInputRef.current?.focus()}
+              onFocus={revealForm}
+              returnKeyType="next"
             />
 
             <Text style={styles.label}>Contraseña</Text>
             <View style={styles.passwordField}>
-              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 
@@ -105,7 +130,8 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
-  scrollContentMobile: { flexGrow: 0, justifyContent: 'flex-start', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.lg },
+  scrollContentMobile: { flexGrow: 1, justifyContent: 'flex-start', paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xl },
+  scrollContentKeyboard: { justifyContent: 'flex-end', paddingTop: spacing.md, paddingBottom: spacing.md },
   content: { width: '100%', maxWidth: 960, alignSelf: 'center', flexDirection: 'row', gap: spacing.xl, alignItems: 'stretch', flexWrap: 'wrap' },
   contentMobile: { maxWidth: 430, flexDirection: 'column', flexWrap: 'nowrap', alignItems: 'stretch', gap: spacing.lg },
   brandPanel: { flex: 1, minWidth: 280, backgroundColor: colors.primary, borderRadius: radius.xl, padding: spacing.xl, justifyContent: 'center', gap: spacing.md },
