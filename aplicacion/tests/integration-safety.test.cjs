@@ -263,6 +263,35 @@ test('state updates use the atomic RPC and never fall back to direct table updat
   assert.ok(!calls.some((call) => call.operation === 'update' || call.operation === 'insert'));
 });
 
+test('assignment submits department, assignee, priority and note through one RPC without partial writes', async () => {
+  const { client, calls } = clientDouble(undefined, { rpc: async () => ({ data: '2026-10-23T16:00:00Z', error: null }) });
+  const reports = reportsWithPhotos(client);
+  await reports.updateReportManagement({
+    incidentId: 'new-report', previousStatus: 'VALIDADO', departmentId: 7,
+    assignedToId: 'employee-7', priority: 'ALTA', note: '  Reparar luminaria  '
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{
+    operation: 'rpc', name: 'assign_incident', parameters: {
+      p_incident_id: 'new-report', p_previous_status: 'VALIDADO', p_department_id: 7,
+      p_assigned_to: 'employee-7', p_priority: 'ALTA', p_note: 'Reparar luminaria'
+    }
+  }]);
+  for (const status of ['REGISTRADO', 'EN_ATENCION', 'CERRADO']) {
+    await assert.rejects(reports.updateReportManagement({ incidentId: 'old', previousStatus: status, departmentId: 7, assignedToId: 'employee-7', priority: 'ALTA', note: 'Intento' }), /valida/);
+  }
+  await assert.rejects(reports.updateReportStatus('new-report', 'VALIDADO', 'ASIGNADO', 'Intento'), /asignación operativa/);
+  assert.equal(calls.length, 1);
+});
+
+test('assignment rejects a concurrent change without attempting a direct update', async () => {
+  const { client, calls } = clientDouble(undefined, { rpc: async () => ({ data: null, error: { message: 'Incident status changed' } }) });
+  await assert.rejects(reportsWithPhotos(client).updateReportManagement({
+    incidentId: 'already-changed', previousStatus: 'VALIDADO', departmentId: 7,
+    assignedToId: 'employee-7', priority: 'MEDIA', note: 'Asignar trabajo'
+  }), /cambió desde otra sesión/);
+  assert.ok(!calls.some((call) => ['update', 'insert'].includes(call.operation)));
+});
+
 function workflowScreenHarness(databaseRole, incidents = [], visualRole, { isLoading = false, error = '', isPreview = false, width = 390 } = {}) {
   const slots = [];
   let index = 0;
@@ -383,6 +412,24 @@ test('administrator receives only the next valid workflow transitions', () => {
   assert.ok(!labels.includes('Resuelto'));
 });
 
+test('administrator assignment form is available only for a validated unassigned report', () => {
+  for (const [status, departmentId, assignedToId, visible] of [
+    ['REGISTRADO', null, null, false],
+    ['VALIDADO', null, null, true],
+    ['VALIDADO', 7, 'existing-worker', false],
+    ['EN_ATENCION', 7, 'existing-worker', false],
+    ['CERRADO', 7, 'existing-worker', false]
+  ]) {
+    const harness = workflowScreenHarness('administrador', [{ ...reportsFixture('MEDIA'), status, departmentId, assignedToId }]);
+    let tree = harness.render();
+    nodes(tree).find((node) => node.type === 'IncidentCard').props.onPress();
+    tree = harness.render();
+    assert.equal(nodes(tree).some((node) => node.props?.label === 'Asignar reporte'), visible);
+    const labels = nodes(tree).map((node) => node.props?.children).filter((value) => typeof value === 'string');
+    assert.equal(labels.includes('Asignado'), false);
+  }
+});
+
 test('changing identity hides earlier results and reloads personal operator tasks', async () => {
   let identity = { userId: 'admin-account', databaseRole: 'administrador', departmentId: null, isAuthenticated: true };
   const slots = [];
@@ -409,6 +456,64 @@ test('changing identity hides earlier results and reloads personal operator task
   assert.equal(render().incidents[0].id, 'personal-report');
   assert.equal(reads, 2);
   nextBlur();
+});
+
+test('Realtime reloads authorized report lists, scopes workers and removes old-session subscriptions', async () => {
+  let identity = { userId: 'admin-a', databaseRole: 'administrador', departmentId: null, isAuthenticated: true };
+  const slots = [];
+  const channels = [];
+  let index = 0;
+  let focus;
+  let reads = 0;
+  let foreground;
+  const removed = [];
+  const client = {
+    channel(name) {
+      const channel = {
+        name, bindings: [], on(type, config, listener) { this.bindings.push({ type, config, listener }); return this; },
+        subscribe(listener) { this.status = listener; return this; }
+      };
+      channels.push(channel);
+      return channel;
+    },
+    removeChannel: async (channel) => { removed.push(channel); }
+  };
+  const hook = loader({
+    react: {
+      useState(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = initial; return [slots[slot], (value) => { slots[slot] = value; }]; },
+      useRef(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = { current: initial }; return slots[slot]; },
+      useCallback: (callback) => callback
+    },
+    'react-native': { AppState: { addEventListener: (_, listener) => { foreground = listener; return { remove() { foreground = null; } }; } } },
+    'expo-router': { useFocusEffect: (callback) => { focus = callback; } },
+    '@/lib/supabase': { isSupabaseConfigured: true, supabase: client },
+    '@/context/SessionContext': { useSession: () => identity },
+    '@/services/reports': { listReports: async () => { reads++; return [{ id: identity.userId }]; } }
+  }, { setInterval: () => 1, clearInterval: () => {} })('src/hooks/useReports.ts').useReports;
+  const render = () => { index = 0; return hook(); };
+  render(); const blurAdmin = focus(); await new Promise(setImmediate);
+  assert.equal(channels[0].bindings[0].config.filter, undefined);
+  assert.deepEqual(channels[0].bindings.map((binding) => binding.config.event), ['INSERT', 'UPDATE']);
+  channels[0].status('SUBSCRIBED'); await new Promise(setImmediate);
+  channels[0].bindings[0].listener(); await new Promise(setImmediate);
+  assert.equal(reads, 3);
+  foreground('active'); await new Promise(setImmediate);
+  assert.equal(reads, 4);
+  blurAdmin();
+  assert.deepEqual(removed, [channels[0]]);
+  channels[0].status('SUBSCRIBED');
+  channels[0].bindings[0].listener();
+  await new Promise(setImmediate);
+  assert.equal(reads, 4);
+
+  identity = { userId: 'worker-b', databaseRole: 'operador', departmentId: 7, isAuthenticated: true };
+  assert.equal(render().incidents.length, 0);
+  const blurWorker = focus(); await new Promise(setImmediate);
+  assert.equal(channels[1].bindings[0].config.filter, 'assigned_to=eq.worker-b');
+  assert.ok(channels[1].bindings.every((binding) => binding.config.filter === 'assigned_to=eq.worker-b'));
+  assert.equal(render().incidents[0].id, 'worker-b');
+  blurWorker();
+  assert.deepEqual(removed, channels);
 });
 
 test('real report reads retain schema priorities and normalize missing or invalid values', async () => {

@@ -33,7 +33,7 @@ const statusLabels: Record<IncidentStatus, string> = {
 const administrativeTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> = {
   REGISTRADO: ['EN_REVISION', 'RECHAZADO'],
   EN_REVISION: ['VALIDADO', 'RECHAZADO'],
-  VALIDADO: ['ASIGNADO', 'RECHAZADO'],
+  VALIDADO: ['RECHAZADO'],
   ASIGNADO: ['EN_ATENCION'],
   EN_ATENCION: ['POR_VERIFICAR'],
   POR_VERIFICAR: ['CERRADO', 'EN_ATENCION'],
@@ -53,7 +53,8 @@ export default function ReportsScreen() {
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('TODAS');
   const [departmentFilter, setDepartmentFilter] = useState('TODOS');
-  const [selected, setSelected] = useState<Incident | null>(null);
+  const [selectedItem, setSelected] = useState<Incident | null>(null);
+  const selected = availableIncidents.find((item) => item.id === selectedItem?.id) ?? null;
   const [nextStatus, setNextStatus] = useState<IncidentStatus | null>(null);
   const [statusNote, setStatusNote] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -64,6 +65,7 @@ export default function ReportsScreen() {
   const [managementPriority, setManagementPriority] = useState<IncidentPriority>('MEDIA');
   const [managementDepartmentId, setManagementDepartmentId] = useState<number | null>(null);
   const [managementAssigneeId, setManagementAssigneeId] = useState<string | null>(null);
+  const [managementNote, setManagementNote] = useState('');
   const [managementMessage, setManagementMessage] = useState('');
   const [managementError, setManagementError] = useState('');
   const [isSavingManagement, setIsSavingManagement] = useState(false);
@@ -72,6 +74,7 @@ export default function ReportsScreen() {
   const [evidenceError, setEvidenceError] = useState('');
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
   const canManageAssignment = databaseRole === 'administrador';
+  const canAssignSelected = canManageAssignment && selected?.status === 'VALIDADO' && !selected.assignedToId && !selected.departmentId;
   const readableIncidents = availableIncidents;
   const departmentOptions = useMemo(() => Array.from(new Set(readableIncidents.map((item) => item.department))).sort(), [readableIncidents]);
   const incidents = useMemo(() => readableIncidents.filter((item) => {
@@ -95,7 +98,11 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     if (!canManageAssignment || !managementDepartmentId) return;
-    listDepartmentStaff(managementDepartmentId).then(setStaff).catch(() => setManagementError('No fue posible cargar el personal del departamento.'));
+    let active = true;
+    listDepartmentStaff(managementDepartmentId)
+      .then((people) => { if (active) setStaff(people); })
+      .catch(() => { if (active) setManagementError('No fue posible cargar el personal del departamento.'); });
+    return () => { active = false; };
   }, [canManageAssignment, managementDepartmentId]);
 
   const selectReport = (incident: Incident) => {
@@ -107,6 +114,7 @@ export default function ReportsScreen() {
     setManagementPriority(incident.priority);
     setManagementDepartmentId(incident.departmentId ?? null);
     setManagementAssigneeId(incident.assignedToId ?? null);
+    setManagementNote('');
     if (!incident.departmentId) setStaff([]);
     setManagementMessage('');
     setManagementError('');
@@ -143,13 +151,12 @@ export default function ReportsScreen() {
   };
 
   const saveManagement = async () => {
-    if (!selected || !managementDepartmentId || isSavingManagement) return;
+    if (!selected || !canAssignSelected || !managementDepartmentId || !managementAssigneeId || !managementNote.trim() || isSavingManagement) return;
     setIsSavingManagement(true); setManagementError(''); setManagementMessage('');
     try {
-      const result = await updateReportManagement({ incidentId: selected.id, priority: managementPriority, departmentId: managementDepartmentId, assignedToId: managementAssigneeId });
-      const departmentName = departments.find((item) => item.id === managementDepartmentId)?.name ?? selected.department;
-      setSelected({ ...selected, priority: managementPriority, department: departmentName as Incident['department'], departmentId: managementDepartmentId, assignedToId: managementAssigneeId, updatedAt: result.updatedAt });
-      setManagementMessage('La prioridad y asignación quedaron guardadas.');
+      await updateReportManagement({ incidentId: selected.id, previousStatus: selected.status, priority: managementPriority, departmentId: managementDepartmentId, assignedToId: managementAssigneeId, note: managementNote });
+      setManagementNote('');
+      setManagementMessage('El reporte quedó asignado y el cambio se registró en el historial.');
       await reload();
     } catch (saveError) {
       setManagementError(saveError instanceof Error ? saveError.message : 'No fue posible guardar la asignación.');
@@ -166,8 +173,7 @@ export default function ReportsScreen() {
     setStatusMessage('');
     setStatusError('');
     try {
-      const result = await updateReportStatus(selected.id, selected.status, nextStatus, statusNote, selected.category, managementDepartmentId);
-      setSelected({ ...selected, status: nextStatus, updatedAt: result.updatedAt });
+      await updateReportStatus(selected.id, selected.status, nextStatus, statusNote);
       setStatusMessage('El estado y la trazabilidad se actualizaron correctamente.');
       setNextStatus(null);
       setStatusNote('');
@@ -200,28 +206,29 @@ export default function ReportsScreen() {
         {databaseRole === 'administrador' ? <DetailRow label="Ciudadano" value={selected.citizenName} /> : null}
         {databaseRole === 'administrador' && selected.citizenEmail ? <DetailRow label="Correo" value={selected.citizenEmail} /> : null}
       </View>
-      {canManageAssignment && <View style={styles.managementCard}>
-        <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="people-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Asignación operativa</Text><Text style={styles.managementCopy}>Define la urgencia, el área responsable y, si corresponde, una persona encargada.</Text></View></View>
+      {canAssignSelected && <View style={styles.managementCard}>
+        <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="people-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Asignación operativa</Text><Text style={styles.managementCopy}>Elige prioridad, departamento y responsable. Al confirmar, el reporte pasará a Asignado.</Text></View></View>
         <Text style={styles.fieldLabel}>Prioridad</Text>
         <View style={styles.statusOptions}>{priorities.map((priority) => <Pressable key={priority} onPress={() => setManagementPriority(priority)} style={[styles.statusOption, managementPriority === priority && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, managementPriority === priority && styles.statusOptionTextSelected]}>{priority.charAt(0) + priority.slice(1).toLowerCase()}</Text></Pressable>)}</View>
         <Text style={styles.fieldLabel}>Departamento responsable</Text>
         <View style={styles.statusOptions}>{departments.map((item) => <Pressable key={item.id} onPress={() => { setManagementDepartmentId(item.id); setManagementAssigneeId(null); setStaff([]); }} style={[styles.statusOption, managementDepartmentId === item.id && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, managementDepartmentId === item.id && styles.statusOptionTextSelected]}>{item.name}</Text></Pressable>)}</View>
-        {managementDepartmentId && <><Text style={styles.fieldLabel}>Responsable (opcional)</Text><View style={styles.statusOptions}><Pressable onPress={() => setManagementAssigneeId(null)} style={[styles.statusOption, !managementAssigneeId && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, !managementAssigneeId && styles.statusOptionTextSelected]}>Sin asignar</Text></Pressable>{staff.map((item) => <Pressable key={item.id} onPress={() => setManagementAssigneeId(item.id)} style={[styles.statusOption, managementAssigneeId === item.id && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, managementAssigneeId === item.id && styles.statusOptionTextSelected]}>{item.fullName}</Text></Pressable>)}</View>{!staff.length && <Text style={styles.helperText}>No hay personal activo disponible en esta área.</Text>}</>}
+        {managementDepartmentId && <><Text style={styles.fieldLabel}>Responsable</Text><View style={styles.statusOptions}>{staff.map((item) => <Pressable key={item.id} onPress={() => setManagementAssigneeId(item.id)} style={[styles.statusOption, managementAssigneeId === item.id && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, managementAssigneeId === item.id && styles.statusOptionTextSelected]}>{item.fullName} · {item.role}</Text></Pressable>)}</View>{!staff.length && <Text style={styles.helperText}>No hay operadores ni personal de mantenimiento activo en esta área.</Text>}</>}
+        <Text style={styles.fieldLabel}>Observaciones de asignación</Text>
+        <TextInput value={managementNote} onChangeText={setManagementNote} multiline maxLength={300} placeholder="Indica el trabajo solicitado..." placeholderTextColor={colors.muted} style={styles.noteInput} />
         {managementError ? <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.inlineErrorText}>{managementError}</Text></View> : null}
         {managementMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{managementMessage}</Text></View> : null}
-        <AppButton disabled={!managementDepartmentId || isSavingManagement} label={isSavingManagement ? 'Guardando...' : 'Guardar asignación'} icon="save-outline" onPress={saveManagement} />
+        <AppButton disabled={!managementDepartmentId || !managementAssigneeId || !managementNote.trim() || isSavingManagement} label={isSavingManagement ? 'Asignando...' : 'Asignar reporte'} icon="save-outline" onPress={saveManagement} />
       </View>}
       {(databaseRole === 'administrador' || databaseRole === 'mantenimiento' || databaseRole === 'operador') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="git-branch-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Actualizar proceso</Text><Text style={styles.managementCopy}>Registra el siguiente avance permitido para este reporte.</Text></View></View>
         {availableTransitions.length ? <>
           <Text style={styles.fieldLabel}>Siguiente estado</Text>
           <View style={styles.statusOptions}>{availableTransitions.map((status) => <Pressable key={status} onPress={() => { setNextStatus(status); setStatusError(''); setStatusMessage(''); }} style={[styles.statusOption, nextStatus === status && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, nextStatus === status && styles.statusOptionTextSelected]}>{statusLabels[status]}</Text></Pressable>)}</View>
-          {nextStatus === 'ASIGNADO' && <View style={styles.assignmentNotice}><Ionicons name="business-outline" size={19} color={visual.primary} /><Text style={styles.assignmentNoticeText}>{managementDepartmentId ? `El reporte se enviará a ${departments.find((item) => item.id === managementDepartmentId)?.name ?? 'el departamento seleccionado'}.` : 'Selecciona y guarda primero el departamento responsable en la sección anterior.'}</Text></View>}
           <Text style={styles.fieldLabel}>Nota del cambio</Text>
           <TextInput value={statusNote} onChangeText={setStatusNote} multiline maxLength={300} placeholder="Agrega una observación para la trazabilidad..." placeholderTextColor={colors.muted} style={styles.noteInput} />
           {statusError ? <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.inlineErrorText}>{statusError}</Text></View> : null}
           {statusMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{statusMessage}</Text></View> : null}
-          <AppButton disabled={!nextStatus || isUpdatingStatus || (nextStatus === 'ASIGNADO' && canManageAssignment && !managementDepartmentId)} label={isUpdatingStatus ? 'Actualizando...' : 'Confirmar cambio'} icon="checkmark-circle-outline" onPress={changeStatus} />
+          <AppButton disabled={!nextStatus || isUpdatingStatus} label={isUpdatingStatus ? 'Actualizando...' : 'Confirmar cambio'} icon="checkmark-circle-outline" onPress={changeStatus} />
         </> : <View style={styles.noTransitions}><Ionicons name="lock-closed-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{selected.status === 'CERRADO' ? 'Este reporte ya está cerrado.' : 'No hay cambios disponibles para tu rol en el estado actual.'}</Text></View>}
       </View>}
       {(databaseRole === 'administrador' || databaseRole === 'mantenimiento' || databaseRole === 'operador') && <View style={styles.managementCard}>

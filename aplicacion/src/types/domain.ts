@@ -30,7 +30,7 @@ export type Incident = {
   citizenEmail: string;
   latitude?: number | null;
   longitude?: number | null;
-  department: MaintenanceDepartment;
+  department: string;
   departmentId?: number | null;
   assignedToId?: string | null;
   priority: IncidentPriority;
