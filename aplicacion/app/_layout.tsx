@@ -3,10 +3,12 @@ import { StatusBar } from 'expo-status-bar';
 import { colors } from '@/theme/tokens';
 import { SessionProvider } from '@/context/SessionContext';
 import { ReportsProvider } from '@/context/ReportsContext';
+import { SessionSecurityController } from '@/components/SessionSecurityController';
 
 export default function RootLayout() {
   return (
     <SessionProvider>
+      <SessionSecurityController />
       <ReportsProvider>
         <StatusBar style="light" />
         <Stack screenOptions={{ headerStyle: { backgroundColor: colors.primary }, headerTintColor: colors.white }}>

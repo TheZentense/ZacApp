@@ -44,7 +44,10 @@ export type ReportEvidence = {
   url: string;
   mimeType: string;
   createdAt: string;
+  kind: 'INICIAL' | 'ADICIONAL' | 'AVANCE' | 'FINAL' | 'OTRA';
 };
+
+export type StaffEvidenceKind = 'AVANCE' | 'FINAL';
 
 type CategoryStorageRow = {
   id: number;
@@ -169,7 +172,7 @@ export async function createReport({ categoryId, description, location, latitude
   return data[0] as { id: string; code: string };
 }
 
-export async function uploadReportEvidence(incidentId: string, evidence: ReportEvidenceInput) {
+export async function uploadReportEvidence(incidentId: string, evidence: ReportEvidenceInput, staffKind: StaffEvidenceKind = 'AVANCE') {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -213,7 +216,7 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
     mime_type: evidence.mimeType,
     file_url: storagePath,
     file_type: evidence.mimeType,
-    evidence_kind: incident.citizen_id === authData.user.id ? 'OTRA' : 'AVANCE'
+    evidence_kind: incident.citizen_id === authData.user.id ? 'OTRA' : staffKind
   });
 
   if (evidenceError) {
@@ -461,7 +464,7 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
 
   const { data, error } = await client
     .from('incident_evidence')
-    .select('id, storage_path, mime_type, uploaded_by, created_at')
+    .select('id, storage_path, mime_type, uploaded_by, evidence_kind, created_at')
     .eq('incident_id', incidentId)
     .order('created_at', { ascending: true });
 
@@ -485,7 +488,8 @@ export async function listReportEvidence(incidentId: string): Promise<ReportEvid
       id: String(item.id),
       url: signedData.signedUrl,
       mimeType: item.mime_type ?? 'image/jpeg',
-      createdAt: formatDateTime(item.created_at)
+      createdAt: formatDateTime(item.created_at),
+      kind: ['INICIAL', 'ADICIONAL', 'AVANCE', 'FINAL', 'OTRA'].includes(item.evidence_kind) ? item.evidence_kind : 'OTRA'
     };
   }));
 }

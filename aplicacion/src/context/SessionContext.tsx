@@ -194,7 +194,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setPhone(normalizedPhone);
       },
       signOut: async () => {
-        if (supabase) await supabase.auth.signOut();
+        if (supabase) await supabase.auth.signOut({ scope: 'local' });
         await hydrateIdentity(null);
       }
     }),

@@ -25,7 +25,7 @@ declare
   normalized_note text := nullif(trim(p_note), '');
   changed_at timestamptz;
 begin
-  if actor_id is null or (select auth.role()) is distinct from 'authenticated' then
+  if actor_id is null then
     raise exception 'Assignment access denied';
   end if;
 

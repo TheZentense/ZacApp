@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
@@ -11,8 +11,9 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident, IncidentPriority, IncidentStatus } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
-import { listDepartments, listDepartmentStaff, updateReportManagement, updateReportStatus, uploadReportEvidence, type ReportAssignee, type ReportDepartment, type ReportEvidenceInput } from '@/services/reports';
+import { listDepartments, listDepartmentStaff, listReportEvidence, updateReportManagement, updateReportStatus, uploadReportEvidence, type ReportAssignee, type ReportDepartment, type ReportEvidence, type ReportEvidenceInput, type StaffEvidenceKind } from '@/services/reports';
 import { AppButton } from '@/components/AppButton';
+import { IncidentHeatmap, ReportLocationMap } from '@/components/IncidentLocation';
 
 type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
 type PriorityFilter = 'TODAS' | IncidentPriority;
@@ -73,6 +74,9 @@ export default function ReportsScreen() {
   const [evidenceMessage, setEvidenceMessage] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
+  const [existingEvidence, setExistingEvidence] = useState<ReportEvidence[]>([]);
+  const [isLoadingEvidence, setIsLoadingEvidence] = useState(false);
+  const [staffEvidenceKind, setStaffEvidenceKind] = useState<StaffEvidenceKind>('AVANCE');
   const canManageAssignment = databaseRole === 'administrador';
   const canAssignSelected = canManageAssignment && selected?.status === 'VALIDADO' && !selected.assignedToId && !selected.departmentId;
   const readableIncidents = availableIncidents;
@@ -90,6 +94,7 @@ export default function ReportsScreen() {
   const availableTransitions = selected
     ? (databaseRole === 'mantenimiento' || databaseRole === 'operador' ? maintenanceTransitions[selected.status] : databaseRole === 'administrador' ? administrativeTransitions[selected.status] : []) ?? []
     : [];
+  const selectedIncidentId = selected?.id;
 
   useEffect(() => {
     if (!canManageAssignment) return;
@@ -105,7 +110,20 @@ export default function ReportsScreen() {
     return () => { active = false; };
   }, [canManageAssignment, managementDepartmentId]);
 
+  useEffect(() => {
+    if (!selectedIncidentId) return;
+    let active = true;
+    listReportEvidence(selectedIncidentId)
+      .then((items) => { if (active) setExistingEvidence(items); })
+      .catch(() => { if (active) { setExistingEvidence([]); setEvidenceError('No fue posible abrir las fotografías del reporte.'); } })
+      .finally(() => { if (active) setIsLoadingEvidence(false); });
+    return () => { active = false; };
+  }, [databaseRole, selectedIncidentId]);
+
   const selectReport = (incident: Incident) => {
+    setIsLoadingEvidence(true);
+    setEvidenceError('');
+    setExistingEvidence([]);
     setSelected(incident);
     setNextStatus(null);
     setStatusNote('');
@@ -121,6 +139,8 @@ export default function ReportsScreen() {
     setWorkEvidence(null);
     setEvidenceMessage('');
     setEvidenceError('');
+    setExistingEvidence([]);
+    setStaffEvidenceKind(incident.status === 'POR_VERIFICAR' || incident.status === 'CERRADO' ? 'FINAL' : 'AVANCE');
   };
 
   const selectWorkEvidence = async () => {
@@ -142,9 +162,10 @@ export default function ReportsScreen() {
     if (!selected || !workEvidence || isUploadingEvidence) return;
     setIsUploadingEvidence(true); setEvidenceError(''); setEvidenceMessage('');
     try {
-      await uploadReportEvidence(selected.id, workEvidence);
+      await uploadReportEvidence(selected.id, workEvidence, staffEvidenceKind);
       setWorkEvidence(null);
       setEvidenceMessage('La evidencia quedó asociada al historial del reporte.');
+      setExistingEvidence(await listReportEvidence(selected.id));
     } catch (uploadError) {
       setEvidenceError(uploadError instanceof Error ? uploadError.message : 'No fue posible adjuntar la evidencia.');
     } finally { setIsUploadingEvidence(false); }
@@ -206,6 +227,12 @@ export default function ReportsScreen() {
         {databaseRole === 'administrador' ? <DetailRow label="Ciudadano" value={selected.citizenName} /> : null}
         {databaseRole === 'administrador' && selected.citizenEmail ? <DetailRow label="Correo" value={selected.citizenEmail} /> : null}
       </View>
+      {databaseRole !== 'ciudadano' && selected.latitude != null && selected.longitude != null ? <ReportLocationMap latitude={selected.latitude} longitude={selected.longitude} label={selected.location} /> : null}
+      <View style={styles.managementCard}>
+        <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="images-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Evidencias del reporte</Text><Text style={styles.managementCopy}>Fotografías iniciales y evidencias agregadas durante la atención.</Text></View></View>
+        {databaseRole === 'ciudadano' && selected.status === 'CERRADO' ? <View style={styles.resolutionNotice}><Ionicons name="checkmark-done-circle-outline" size={22} color={colors.primary} /><Text style={styles.resolutionNoticeText}>{existingEvidence.some((item) => item.kind === 'FINAL') ? 'El departamento adjuntó evidencia del trabajo finalizado.' : 'El reporte fue resuelto. La fotografía del resultado es opcional y el departamento no adjuntó una.'}</Text></View> : null}
+        {isLoadingEvidence ? <View style={styles.evidenceLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.helperText}>Abriendo fotografías protegidas...</Text></View> : existingEvidence.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.evidenceGallery}>{existingEvidence.map((item, index) => <View key={item.id} style={styles.evidenceItem}><Image accessibilityLabel={`Evidencia ${index + 1} del reporte`} source={{ uri: item.url }} style={styles.evidenceImage} /><Text style={styles.evidenceCaption}>{item.kind === 'INICIAL' ? 'Evidencia inicial' : item.kind === 'ADICIONAL' ? 'Evidencia ciudadana' : item.kind === 'FINAL' ? 'Resultado del departamento' : item.kind === 'AVANCE' ? 'Avance del departamento' : `Evidencia ${index + 1}`} · {item.createdAt}</Text></View>)}</ScrollView> : <View style={styles.noTransitions}><Ionicons name="image-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{evidenceError || 'Este reporte todavía no tiene fotografías disponibles.'}</Text></View>}
+      </View>
       {canAssignSelected && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="people-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Asignación operativa</Text><Text style={styles.managementCopy}>Elige prioridad, departamento y responsable. Al confirmar, el reporte pasará a Asignado.</Text></View></View>
         <Text style={styles.fieldLabel}>Prioridad</Text>
@@ -233,12 +260,16 @@ export default function ReportsScreen() {
       </View>}
       {(databaseRole === 'administrador' || databaseRole === 'mantenimiento' || databaseRole === 'operador') && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="camera-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Evidencia de atención</Text><Text style={styles.managementCopy}>Adjunta una fotografía del avance o del trabajo realizado. Se optimizará antes de subirla.</Text></View></View>
+        <Text style={styles.fieldLabel}>Tipo de evidencia</Text>
+        <View style={styles.statusOptions}><Pressable onPress={() => setStaffEvidenceKind('AVANCE')} style={[styles.statusOption, staffEvidenceKind === 'AVANCE' && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, staffEvidenceKind === 'AVANCE' && styles.statusOptionTextSelected]}>Avance</Text></Pressable><Pressable onPress={() => setStaffEvidenceKind('FINAL')} style={[styles.statusOption, staffEvidenceKind === 'FINAL' && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.statusOptionText, staffEvidenceKind === 'FINAL' && styles.statusOptionTextSelected]}>Solución final</Text></Pressable></View>
+        <Text style={styles.helperText}>{staffEvidenceKind === 'FINAL' ? 'La fotografía se mostrará al ciudadano como resultado del departamento. Es opcional.' : 'La fotografía quedará registrada como parte del avance interno.'}</Text>
         {workEvidence ? <View style={styles.evidenceReady}><Ionicons name="image-outline" size={23} color={visual.primary} /><View style={styles.managementTitleBlock}><Text style={styles.evidenceReadyTitle}>Fotografía preparada</Text><Text style={styles.helperText}>Lista para asociarse al reporte {selected.code}.</Text></View><Pressable onPress={() => setWorkEvidence(null)}><Ionicons name="close-circle" size={22} color={colors.muted} /></Pressable></View> : null}
         <View style={styles.evidenceActions}><AppButton label={workEvidence ? 'Cambiar fotografía' : 'Seleccionar fotografía'} icon="images-outline" disabled={isUploadingEvidence} onPress={selectWorkEvidence} /><AppButton label={isUploadingEvidence ? 'Subiendo...' : 'Adjuntar evidencia'} icon="cloud-upload-outline" disabled={!workEvidence || isUploadingEvidence} onPress={submitWorkEvidence} /></View>
         {evidenceError ? <View style={styles.inlineError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.inlineErrorText}>{evidenceError}</Text></View> : null}
         {evidenceMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{evidenceMessage}</Text></View> : null}
       </View>}
     </> : <>
+      {databaseRole !== 'ciudadano' && !isLoading && !error ? <IncidentHeatmap incidents={readableIncidents} /> : null}
       <View style={styles.filterPanel}>
         <View style={styles.searchBox}><Ionicons name="search-outline" size={20} color={colors.muted} /><TextInput value={search} onChangeText={setSearch} placeholder="Buscar por código, título, categoría o ubicación" placeholderTextColor={colors.muted} style={styles.searchInput} /><Pressable disabled={!search} onPress={() => setSearch('')} style={styles.clearSearch}><Ionicons name="close-circle" size={19} color={search ? colors.muted : colors.border} /></Pressable></View>
         <View style={styles.filterGroup}><Text style={styles.filterLabel}>Estado</Text><View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View></View>
@@ -309,5 +340,12 @@ const styles = StyleSheet.create({
   helperText: { color: colors.muted, fontSize: 13, lineHeight: 18 },
   evidenceReady: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   evidenceReadyTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
-  evidenceActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }
+  evidenceActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  evidenceLoading: { minHeight: 120, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  evidenceGallery: { gap: spacing.md, paddingVertical: spacing.xs },
+  evidenceItem: { width: 280, gap: spacing.xs },
+  evidenceImage: { width: 280, height: 190, borderRadius: radius.md, backgroundColor: colors.surface },
+  evidenceCaption: { color: colors.muted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
+  resolutionNotice: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  resolutionNoticeText: { flex: 1, color: colors.primary, lineHeight: 19, fontWeight: '700' }
 });

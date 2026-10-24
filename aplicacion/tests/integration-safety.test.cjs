@@ -28,7 +28,11 @@ function loader(overrides = {}, globals = {}) {
       if (Object.hasOwn(overrides, name)) return overrides[name];
       if (Object.hasOwn(nativeDoubles, name)) return nativeDoubles[name];
       if (name === '@/lib/supabase') throw new Error('Real Supabase is forbidden in local tests');
-      if (name.startsWith('@/')) return load(`src/${name.slice(2)}.ts`);
+      if (name.startsWith('@/')) {
+        const modulePath = `src/${name.slice(2)}`;
+        const tsxPath = path.resolve(__dirname, '..', `${modulePath}.tsx`);
+        return load(fs.existsSync(tsxPath) ? `${modulePath}.tsx` : `${modulePath}.ts`);
+      }
       throw new Error(`Unmocked dependency: ${name}`);
     }
     vm.runInNewContext(source, { require: localRequire, module, exports: module.exports, setTimeout, clearTimeout, URLSearchParams, ...globals }, { filename: absolute });
@@ -309,6 +313,7 @@ function workflowScreenHarness(databaseRole, incidents = [], visualRole, { isLoa
     '@/lib/supabase': { isSupabaseConfigured: true },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
     '@/components/AppButton': { AppButton: 'AppButton' }, '@/components/IncidentCard': { IncidentCard: 'IncidentCard' },
+    '@/components/OpenMapViewport': { OpenMapViewport: 'OpenMapViewport' },
     '@/components/EmptyState': { EmptyState: 'EmptyState' }, '@/components/DataState': { LoadingState: 'LoadingState', ErrorState: 'ErrorState' },
     '@/hooks/useReports': { useReports: () => ({ incidents, isLoading, error, reload() {}, isPreview }) },
     '@/services/reports': { listReportHistory() { assert.fail('Pending screens must not query history'); }, listReportEvidence() { assert.fail('Pending screens must not query evidence'); } },
@@ -1073,6 +1078,18 @@ test('profile query failure leaves the actual session provider without administr
   cleanups.forEach((cleanup) => cleanup?.());
 });
 
+test('mobile session protection returns to profile, confirms sign out and expires after ten background minutes', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, '..', 'src/components/SessionSecurityController.tsx'), 'utf8');
+  assert.match(source, /10 \* 60 \* 1000/);
+  assert.match(source, /nextState === 'background'/);
+  assert.match(source, /nextState === 'active'/);
+  assert.match(source, /pathname !== '\/profile'/);
+  assert.match(source, /router\.replace\('\/profile'\)/);
+  assert.match(source, /Alert\.alert\('Cerrar sesión', '¿Deseas cerrar sesión\?'/);
+  assert.match(source, /text: 'No'/);
+  assert.match(source, /text: 'Sí'/);
+});
+
 test('a delayed administrative profile cannot replace a newer citizen identity', async () => {
   const oldProfile = deferred();
   const newProfile = deferred();
@@ -1309,7 +1326,7 @@ test('a former citizen loses access to old self-reported incidents after becomin
   assert.deepEqual(Array.from(await reports.listReportHistory('current-personal-task')), []);
 });
 
-test('staff evidence is uploaded and linked only after the incident is visible', async () => {
+test('optional final staff evidence is uploaded and linked only after the incident is visible', async () => {
   const { client, calls } = clientDouble((query) => query.operation === 'insert'
     ? { data: null, error: null }
     : { data: { id: 'incident', citizen_id: 'someone-else', category_id: 1, category: { department: { code: 'AGUA' } } }, error: null });
@@ -1317,12 +1334,12 @@ test('staff evidence is uploaded and linked only after the incident is visible',
     '@/lib/supabase': { supabase: client },
     'expo-file-system': { File: class { exists = true; size = 64; async arrayBuffer() { return new ArrayBuffer(64); } } }
   })('src/services/reports.ts');
-  await reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' });
+  await reports.uploadReportEvidence('incident', { uri: 'local://image', mimeType: 'image/jpeg' }, 'FINAL');
   assert.equal(calls.filter((call) => call.operation === 'upload').length, 1);
   const insert = calls.find((call) => call.operation === 'insert');
   assert.equal(insert.table, 'incident_evidence');
   assert.equal(insert.values.uploaded_by, 'owner');
-  assert.equal(insert.values.evidence_kind, 'AVANCE');
+  assert.equal(insert.values.evidence_kind, 'FINAL');
   assert.match(insert.values.storage_path, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/incident\/personal-owner\//);
 });
 
