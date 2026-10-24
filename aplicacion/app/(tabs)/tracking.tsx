@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -11,6 +11,7 @@ import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
 import { listReportEvidence, listReportHistory, type ReportEvidence, type ReportHistoryEntry } from '@/services/reports';
 import { reportReadScopeFor, workflowPermissionsFor } from '@/services/sessionPolicy';
+import { supabase } from '@/lib/supabase';
 
 const historyStatusLabels: Record<Incident['status'], string> = {
   REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
@@ -36,7 +37,7 @@ const completedByStatus: Record<Incident['status'], number> = {
 };
 
 export default function TrackingScreen() {
-  const { role, databaseRole } = useSession();
+  const { role, databaseRole, userId, isAuthenticated } = useSession();
   const permissions = workflowPermissionsFor(databaseRole);
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload, isPreview } = useReports();
@@ -57,6 +58,35 @@ export default function TrackingScreen() {
   const heading = permissions.operator ? 'Seguimiento de mis tareas' : permissions.departmentReports ? 'Seguimiento del departamento' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
   const completedSteps = selected ? completedByStatus[selected.status] ?? 0 : 0;
   const progress = Math.round((completedSteps / steps.length) * 100);
+
+  useEffect(() => {
+    const client = supabase;
+    if (!selected?.id || !client || !isAuthenticated || !userId) return;
+    let active = true;
+    const incidentId = selected.id;
+    const refresh = () => { if (active) setRevision((value) => value + 1); };
+    const channel = client.channel(`report-detail-${incidentId}-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'incident_history', filter: `incident_id=eq.${incidentId}` }, refresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'incident_history', filter: `incident_id=eq.${incidentId}` }, refresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'incident_evidence', filter: `incident_id=eq.${incidentId}` }, refresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'incident_evidence', filter: `incident_id=eq.${incidentId}` }, refresh)
+      .subscribe((status) => {
+        if (active && status === 'SUBSCRIBED') setRevision((value) => value + 1);
+      });
+    const appState = AppState?.addEventListener?.('change', (state) => {
+      if (active && state === 'active') setRevision((value) => value + 1);
+    });
+    // Signed photo URLs last fifteen minutes; renew them while this detail is open.
+    const signedUrlRefresh = setInterval(() => {
+      if (active) setRevision((value) => value + 1);
+    }, 10 * 60_000);
+    return () => {
+      active = false;
+      clearInterval(signedUrlRefresh);
+      appState?.remove();
+      void client.removeChannel(channel);
+    };
+  }, [selected?.id, userId, isAuthenticated]);
 
   useEffect(() => {
     if (!selected) return;
@@ -121,7 +151,7 @@ export default function TrackingScreen() {
         <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>TRAZABILIDAD REAL</Text><Text style={styles.historyTitle}>Historial</Text></View><Ionicons name="time-outline" size={23} color={visual.primary} /></View>
         {historyLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Consultando movimientos...</Text></View> : historyError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{historyError}</Text></View> : <View style={styles.historyList}>
           <View style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>Reporte registrado</Text><Text style={styles.historyMeta}>{selected.createdAt} · Ciudadanía</Text></View></View>
-          {history.map((entry) => <View key={entry.id} style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: entry.newStatus === 'CERRADO' ? colors.accent : visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>{entry.previousStatus ? `${historyStatusLabels[entry.previousStatus]} → ` : ''}{historyStatusLabels[entry.newStatus]}</Text><Text style={styles.historyMeta}>{entry.createdAt} · {entry.changedBy}</Text>{entry.note ? <Text style={styles.historyNote}>{entry.note}</Text> : null}</View></View>)}
+          {history.map((entry) => <View key={entry.id} style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: entry.newStatus === 'CERRADO' ? colors.accent : visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>{entry.previousStatus ? `${historyStatusLabels[entry.previousStatus]} → ` : ''}{historyStatusLabels[entry.newStatus]}</Text><Text style={styles.historyMeta}>{entry.createdAt} · {entry.changedBy}</Text>{entry.assignedTo ? <Text style={styles.historyMeta}>Responsable: {entry.assignedTo}</Text> : null}{entry.note ? <Text style={styles.historyNote}>{entry.note}</Text> : null}</View></View>)}
         </View>}
       </View>
     </> : <>

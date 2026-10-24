@@ -36,6 +36,7 @@ export type ReportHistoryEntry = {
   note: string | null;
   createdAt: string;
   changedBy: string;
+  assignedTo: string | null;
 };
 
 export type ReportEvidence = {
@@ -243,6 +244,7 @@ type IncidentRow = {
   assigned_department_id: number | null;
   assigned_to: string | null;
   category: { name?: string } | { name?: string }[] | null;
+  assignedDepartment: { name?: string } | { name?: string }[] | null;
   evidence: { id: string | number }[] | null;
 };
 
@@ -321,7 +323,7 @@ export async function listReports(): Promise<Incident[]> {
   const { client, scope, userId, departmentId } = await requireReportReadAccess();
   let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, latitude, longitude, reporter_name, reporter_email, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), evidence:incident_evidence(id)');
+    .select('id, code, title, description, address_reference, latitude, longitude, reporter_name, reporter_email, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
   if (scope === 'personal') query = query.eq('assigned_to', userId);
@@ -345,7 +347,7 @@ export async function listReports(): Promise<Incident[]> {
       citizenEmail: incident.reporter_email ?? '',
       latitude: incident.latitude,
       longitude: incident.longitude,
-      department: departmentForCategory(category),
+      department: relationValue(incident.assignedDepartment)?.name ?? departmentForCategory(category),
       departmentId: incident.assigned_department_id,
       assignedToId: incident.assigned_to,
       priority: isIncidentPriority(incident.priority) ? incident.priority : 'MEDIA',
@@ -369,7 +371,7 @@ export async function listDepartmentStaff(departmentId: number): Promise<ReportA
     .select('id, full_name, role')
     .eq('department_id', departmentId)
     .eq('status', 'ACTIVO')
-    .in('role', ['coordinador', 'operador', 'mantenimiento'])
+    .in('role', ['operador', 'mantenimiento'])
     .order('full_name');
   if (error) throw error;
   return (data ?? []).map((item) => ({ id: item.id, fullName: item.full_name || 'Personal sin nombre', role: item.role }));
@@ -377,23 +379,35 @@ export async function listDepartmentStaff(departmentId: number): Promise<ReportA
 
 export async function updateReportManagement(input: {
   incidentId: string;
+  previousStatus: IncidentStatus;
   priority: IncidentPriority;
   departmentId: number;
-  assignedToId?: string | null;
+  assignedToId: string;
+  note: string;
 }) {
   if (!supabase) throw new Error('Supabase no está configurado.');
-  const { data, error } = await supabase
-    .from('incidents')
-    .update({
-      priority: input.priority,
-      assigned_department_id: input.departmentId,
-      assigned_to: input.assignedToId || null
-    })
-    .eq('id', input.incidentId)
-    .select('updated_at')
-    .single();
-  if (error || !data) throw new Error(error?.message ?? 'No fue posible guardar la asignación.');
-  return { updatedAt: formatDate(data.updated_at) };
+  if (input.previousStatus !== 'VALIDADO') throw new Error('Primero valida el reporte antes de asignarlo.');
+  if (!input.assignedToId) throw new Error('Selecciona un responsable activo del departamento.');
+  if (!input.note.trim()) throw new Error('Agrega una observación para la asignación.');
+  const { data, error } = await supabase.rpc('assign_incident', {
+    p_incident_id: input.incidentId,
+    p_previous_status: input.previousStatus,
+    p_department_id: input.departmentId,
+    p_assigned_to: input.assignedToId,
+    p_priority: input.priority,
+    p_note: input.note.trim()
+  });
+  if (error || !data) {
+    const message = error?.message.toLowerCase() ?? '';
+    if (message.includes('status changed') || message.includes('not available for assignment')) {
+      throw new Error('El reporte cambió desde otra sesión o ya fue asignado. Actualiza la lista.');
+    }
+    if (message.includes('assignee') || message.includes('department')) {
+      throw new Error('El responsable debe estar activo y pertenecer al departamento seleccionado.');
+    }
+    throw new Error(error?.message ?? 'No fue posible guardar la asignación.');
+  }
+  return { updatedAt: formatDate(String(data)) };
 }
 
 export async function listReportHistory(incidentId: string): Promise<ReportHistoryEntry[]> {
@@ -401,7 +415,7 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
 
   const { data, error } = await client
     .from('incident_history')
-    .select('id, previous_status, new_status, note, created_at, actor:profiles!incident_history_changed_by_fkey(full_name)')
+    .select('id, previous_status, new_status, note, created_at, actor:profiles!incident_history_changed_by_fkey(full_name), assignee:profiles!incident_history_assigned_to_fkey(full_name)')
     .eq('incident_id', incidentId)
     .order('created_at', { ascending: true });
 
@@ -410,13 +424,16 @@ export async function listReportHistory(incidentId: string): Promise<ReportHisto
   return (data ?? []).map((entry) => {
     const actor = entry.actor as unknown as { full_name?: string } | { full_name?: string }[] | null;
     const fullName = Array.isArray(actor) ? actor[0]?.full_name : actor?.full_name;
+    const assignee = entry.assignee as unknown as { full_name?: string } | { full_name?: string }[] | null;
+    const assigneeName = Array.isArray(assignee) ? assignee[0]?.full_name : assignee?.full_name;
     return {
       id: entry.id,
       previousStatus: entry.previous_status as IncidentStatus | null,
       newStatus: entry.new_status as IncidentStatus,
       note: entry.note,
       createdAt: formatDateTime(entry.created_at),
-      changedBy: fullName ?? 'Personal de ZacApp'
+      changedBy: fullName ?? 'Personal de ZacApp',
+      assignedTo: assigneeName ?? null
     };
   });
 }
@@ -486,37 +503,18 @@ export async function updateReportStatus(
   incidentId: string,
   previousStatus: IncidentStatus,
   newStatus: IncidentStatus,
-  note: string,
-  departmentName?: string,
-  selectedDepartmentId?: number | null
+  note: string
 ): Promise<UpdateReportStatusResult> {
   if (!supabase) throw new Error('Supabase no está configurado.');
   if (previousStatus === newStatus) throw new Error('Selecciona un estado diferente al actual.');
-
-  let assignedDepartmentId: number | null = null;
-  if (newStatus === 'ASIGNADO') {
-    assignedDepartmentId = selectedDepartmentId ?? null;
-    if (!assignedDepartmentId) {
-      if (!departmentName) throw new Error('Selecciona el departamento responsable antes de asignar el reporte.');
-      const compatibleDepartmentNames = [departmentForCategory(departmentName), departmentName];
-      const { data: departments, error: departmentError } = await supabase
-        .from('departments')
-        .select('id')
-        .in('name', compatibleDepartmentNames)
-        .eq('active', true)
-        .limit(1);
-      const department = departments?.[0];
-      if (departmentError || !department) throw new Error('Selecciona el departamento responsable antes de asignar el reporte.');
-      assignedDepartmentId = department.id;
-    }
-  }
+  if (newStatus === 'ASIGNADO') throw new Error('Usa la asignación operativa para seleccionar departamento y responsable.');
 
   const { data: updatedAt, error } = await supabase.rpc('transition_incident', {
     p_incident_id: incidentId,
     p_previous_status: previousStatus,
     p_new_status: newStatus,
     p_note: note.trim() || null,
-    p_department_id: assignedDepartmentId
+    p_department_id: null
   });
 
   if (error || !updatedAt) {
