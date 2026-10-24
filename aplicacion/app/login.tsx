@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
+import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -14,11 +15,17 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const { signIn, signInAsGuest, isAuthenticated, isGuest, isLoading } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
+  const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+  const captchaRequired = Boolean(captchaSiteKey);
+
+  const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) router.replace(isGuest ? '/report/new' : '/(tabs)');
@@ -44,11 +51,15 @@ export default function LoginScreen() {
       setErrorMessage('Ingresa tu correo electrónico y contraseña.');
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      setErrorMessage('Completa la verificación de seguridad para continuar.');
+      return;
+    }
 
     setErrorMessage('');
     setIsSubmitting(true);
     try {
-      await signIn(email, password);
+      await signIn(email, password, captchaToken || undefined);
       router.replace('/(tabs)');
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -59,15 +70,20 @@ export default function LoginScreen() {
       else setErrorMessage('No fue posible iniciar sesión. Inténtalo nuevamente.');
     } finally {
       setIsSubmitting(false);
+      if (captchaRequired) resetCaptcha();
     }
   };
 
   const continueAsGuest = async () => {
     if (isStartingGuest || isSubmitting) return;
+    if (captchaRequired && !captchaToken) {
+      setErrorMessage('Completa la verificación de seguridad para continuar.');
+      return;
+    }
     setErrorMessage('');
     setIsStartingGuest(true);
     try {
-      await signInAsGuest();
+      await signInAsGuest(captchaToken || undefined);
       router.replace('/report/new');
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -77,6 +93,7 @@ export default function LoginScreen() {
       else setErrorMessage('No fue posible iniciar el reporte rápido. Inténtalo nuevamente.');
     } finally {
       setIsStartingGuest(false);
+      if (captchaRequired) resetCaptcha();
     }
   };
 
@@ -130,16 +147,18 @@ export default function LoginScreen() {
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
 
+            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={(token) => { setCaptchaToken(token); setErrorMessage(''); }} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
-              disabled={isSubmitting || isStartingGuest}
+              disabled={isSubmitting || isStartingGuest || (captchaRequired && !captchaToken)}
               onPress={submit}
             />
             <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>
             <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
             <View style={styles.guestDivider}><View style={styles.guestLine} /><Text style={styles.guestDividerText}>O reporta rápidamente</Text><View style={styles.guestLine} /></View>
-            <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Reportar sin crear cuenta'} variant="secondary" icon="megaphone-outline" disabled={isStartingGuest || isSubmitting} onPress={continueAsGuest} />
+            <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Reportar sin crear cuenta'} variant="secondary" icon="megaphone-outline" disabled={isStartingGuest || isSubmitting || (captchaRequired && !captchaToken)} onPress={continueAsGuest} />
             <Text style={styles.guestNote}>Acceso limitado a cinco reportes diarios. La fotografía y la ubicación GPS son obligatorias.</Text>
             <View style={styles.secureNote}><Ionicons name="shield-checkmark-outline" size={17} color={colors.secondary} /><Text style={styles.secureNoteText}>Acceso protegido mediante Supabase Auth.</Text></View>
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>

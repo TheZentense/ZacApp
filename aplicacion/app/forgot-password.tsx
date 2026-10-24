@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { useSession } from '@/context/SessionContext';
 import { colors, radius, spacing } from '@/theme/tokens';
+import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 export default function ForgotPasswordScreen() {
   const { requestPasswordReset } = useSession();
@@ -13,25 +14,33 @@ export default function ForgotPasswordScreen() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+  const captchaRequired = Boolean(captchaSiteKey);
 
   const submit = async () => {
     setError('');
     if (!email.trim() || !email.includes('@')) return setError('Ingresa un correo electrónico válido.');
+    if (captchaRequired && !captchaToken) return setError('Completa la verificación de seguridad para continuar.');
     try {
       setLoading(true);
-      await requestPasswordReset(email, Linking.createURL('/reset-password'));
+      await requestPasswordReset(email, Linking.createURL('/reset-password'), captchaToken || undefined);
       setSent(true);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message.toLowerCase() : '';
       setError(message.includes('rate') ? 'Espera unos minutos antes de solicitar otro correo.' : 'No fue posible solicitar la recuperación. Inténtalo nuevamente.');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      if (captchaRequired) { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); }
+    }
   };
 
   return <ScrollView style={styles.page} contentContainerStyle={styles.content}><View style={styles.card}>
     <View style={styles.icon}><Ionicons name={sent ? 'mail-open-outline' : 'key-outline'} size={30} color={colors.primary} /></View>
     <Text style={styles.title}>{sent ? 'Revisa tu correo' : 'Recupera tu acceso'}</Text>
     <Text style={styles.copy}>{sent ? 'Si existe una cuenta asociada, recibirás un enlace para establecer una contraseña nueva.' : 'Ingresa el correo asociado a ZacApp y te enviaremos un enlace seguro.'}</Text>
-    {!sent && <><Text style={styles.label}>Correo electrónico</Text><TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="correo@zacapp.gt" placeholderTextColor={colors.muted} editable={!loading} style={styles.input} />{error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}<AppButton label={loading ? 'Enviando...' : 'Enviar enlace'} icon="mail-outline" disabled={loading} onPress={submit} /></>}
+    {!sent && <><Text style={styles.label}>Correo electrónico</Text><TextInput value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="correo@zacapp.gt" placeholderTextColor={colors.muted} editable={!loading} style={styles.input} />{error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}{captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_recuperacion" resetKey={captchaResetKey} onToken={(token) => { setCaptchaToken(token); setError(''); }} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setError('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}<AppButton label={loading ? 'Enviando...' : 'Enviar enlace'} icon="mail-outline" disabled={loading || (captchaRequired && !captchaToken)} onPress={submit} /></>}
     {sent && <AppButton label="Volver al inicio de sesión" icon="arrow-back-outline" onPress={() => router.replace('/login')} />}
     {!sent && <AppButton label="Cancelar" variant="ghost" icon="arrow-back-outline" onPress={() => router.back()} />}
   </View></ScrollView>;

@@ -6,6 +6,7 @@ import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { supabase } from '@/lib/supabase';
+import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 function registrationError(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
@@ -29,10 +30,15 @@ export default function RegisterScreen() {
   const [notice, setNotice] = useState('');
   const [pendingEmail, setPendingEmail] = useState('');
   const [isResending, setIsResending] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const requestInFlight = useRef(false);
   const resendAvailableAt = useRef(0);
   const isBusy = isSubmitting || isResending;
   const { signUp, isAuthenticated, isLoading } = useSession();
+  const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+  const captchaRequired = Boolean(captchaSiteKey);
+  const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   if (!isLoading && isAuthenticated) return <Redirect href="/(tabs)" />;
 
@@ -50,13 +56,17 @@ export default function RegisterScreen() {
       setErrorMessage('Utiliza una contraseña de al menos 8 caracteres.');
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      setErrorMessage('Completa la verificación de seguridad para continuar.');
+      return;
+    }
 
     requestInFlight.current = true;
     setErrorMessage('');
     setNotice('');
     setIsSubmitting(true);
     try {
-      const hasSession = await signUp(name, email, password);
+      const hasSession = await signUp(name, email, password, captchaToken || undefined);
       setPassword('');
       setConfirmation('');
       if (hasSession) {
@@ -71,6 +81,7 @@ export default function RegisterScreen() {
     } finally {
       requestInFlight.current = false;
       setIsSubmitting(false);
+      if (captchaRequired) resetCaptcha();
     }
   };
 
@@ -118,7 +129,8 @@ export default function RegisterScreen() {
           {notice ? <View style={styles.privacy}><Text accessibilityLiveRegion="polite" style={styles.privacyText}>{notice}</Text></View> : null}
           {errorMessage ? <View style={styles.errorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.danger} /><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
           <View style={styles.privacy}><Ionicons name="shield-checkmark-outline" size={19} color={colors.secondary} /><Text style={styles.privacyText}>La cuenta se crea únicamente con acceso ciudadano. Los roles internos los asigna la administración.</Text></View>
-          {pendingEmail ? <AppButton label={isResending ? 'Solicitando correo...' : 'Reenviar correo de confirmación'} icon="mail-outline" disabled={isBusy} onPress={resendConfirmation} /> : <AppButton label={isSubmitting ? 'Creando cuenta...' : 'Crear cuenta'} icon="person-add-outline" disabled={isBusy} onPress={submit} />}
+          {!pendingEmail && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_registro" resetKey={captchaResetKey} onToken={(token) => { setCaptchaToken(token); setErrorMessage(''); }} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+          {pendingEmail ? <AppButton label={isResending ? 'Solicitando correo...' : 'Reenviar correo de confirmación'} icon="mail-outline" disabled={isBusy} onPress={resendConfirmation} /> : <AppButton label={isSubmitting ? 'Creando cuenta...' : 'Crear cuenta'} icon="person-add-outline" disabled={isBusy || (captchaRequired && !captchaToken)} onPress={submit} />}
           <AppButton label="Volver a iniciar sesión" variant="secondary" icon="arrow-back-outline" disabled={isBusy} onPress={() => router.replace('/login')} />
         </View>
       </ScrollView>

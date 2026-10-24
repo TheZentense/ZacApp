@@ -1495,3 +1495,26 @@ test('the report screen submits atomically and blocks overlapping submissions', 
   assert.equal(upload.config.contentType, 'image/jpeg');
   assert.equal(upload.config.upsert, false);
 });
+
+test('Turnstile protects every public authentication entry without exposing its secret', () => {
+  const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+  const session = read('src/context/SessionContext.tsx');
+  const login = read('app/login.tsx');
+  const register = read('app/register.tsx');
+  const recovery = read('app/forgot-password.tsx');
+  const webChallenge = read('src/components/TurnstileChallenge.web.tsx');
+  const nativeChallenge = read('src/components/TurnstileChallenge.tsx');
+  const publicEnvironment = read('.env.example');
+
+  assert.match(session, /signInWithPassword[\s\S]*captchaToken/);
+  assert.match(session, /signInAnonymously\(\{ options \}\)/);
+  assert.match(session, /signUp\([\s\S]*captchaToken/);
+  assert.match(session, /resetPasswordForEmail[\s\S]*captchaToken/);
+  assert.match(login, /action="zacapp_login"/);
+  assert.match(register, /action="zacapp_registro"/);
+  assert.match(recovery, /action="zacapp_recuperacion"/);
+  assert.match(webChallenge, /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit/);
+  assert.match(nativeChallenge, /ReactNativeWebView\.postMessage/);
+  assert.match(publicEnvironment, /EXPO_PUBLIC_TURNSTILE_SITE_KEY=/);
+  assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
+});

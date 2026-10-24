@@ -20,11 +20,11 @@ type SessionContextValue = {
   isAuthenticated: boolean;
   isGuest: boolean;
   isLoading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signInAsGuest: (captchaToken?: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string) => Promise<boolean>;
+  signUp: (name: string, email: string, password: string, captchaToken?: string) => Promise<boolean>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  requestPasswordReset: (email: string, redirectTo: string) => Promise<void>;
+  requestPasswordReset: (email: string, redirectTo: string, captchaToken?: string) => Promise<void>;
   completePasswordRecovery: (newPassword: string) => Promise<void>;
   updateProfile: (name: string, phone: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -157,9 +157,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isGuest,
       isLoading,
-      signIn: async (value: string, password: string) => {
+      signIn: async (value: string, password: string, captchaToken?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
-        const { data, error } = await supabase.auth.signInWithPassword({ email: value.trim().toLowerCase(), password });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: value.trim().toLowerCase(),
+          password,
+          options: captchaToken ? { captchaToken } : undefined
+        });
         if (error) throw error;
         const isActive = await hydrateIdentity(data.user);
         if (!isActive) {
@@ -178,12 +182,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           throw new Error('guest access unavailable');
         }
       },
-      signUp: async (name: string, value: string, password: string) => {
+      signUp: async (name: string, value: string, password: string, captchaToken?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         const { data, error } = await supabase.auth.signUp({
           email: value.trim().toLowerCase(),
           password,
-          options: { data: { full_name: name.trim(), role: 'citizen' } }
+          options: { data: { full_name: name.trim(), role: 'citizen' }, ...(captchaToken ? { captchaToken } : {}) }
         });
         if (error) throw error;
         return Boolean(data.session);
@@ -193,9 +197,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.updateUser({ password: newPassword, current_password: currentPassword });
         if (error) throw error;
       },
-      requestPasswordReset: async (value: string, redirectTo: string) => {
+      requestPasswordReset: async (value: string, redirectTo: string, captchaToken?: string) => {
         if (!supabase) throw new Error('Supabase no está configurado.');
-        const { error } = await supabase.auth.resetPasswordForEmail(value.trim().toLowerCase(), { redirectTo });
+        const { error } = await supabase.auth.resetPasswordForEmail(value.trim().toLowerCase(), {
+          redirectTo,
+          ...(captchaToken ? { captchaToken } : {})
+        });
         if (error) throw error;
       },
       completePasswordRecovery: async (newPassword: string) => {
