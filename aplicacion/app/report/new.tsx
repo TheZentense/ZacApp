@@ -31,13 +31,15 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
 }
 
 export default function NewReportScreen() {
-  const { role, email, fullName, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
+  const { role, email, fullName, isAuthenticated, isGuest, isLoading, isPasswordRecovery } = useSession();
   const mountedRef = useRef(true);
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
   const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
   const [categoriesLoading, setCategoriesLoading] = useState(isSupabaseConfigured);
   const [categoriesError, setCategoriesError] = useState('');
   const [description, setDescription] = useState('');
+  const [guestName, setGuestName] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
   const [location, setLocation] = useState('');
   const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number; accuracy: number | null } | null>(null);
   const [isLocating, setIsLocating] = useState(false);
@@ -52,6 +54,7 @@ export default function NewReportScreen() {
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const createdIncidentRef = useRef<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const maxEvidence = isGuest ? 3 : 5;
 
   const captureLocation = async () => {
     if (isLocating || requestInFlight.current) return;
@@ -142,7 +145,7 @@ export default function NewReportScreen() {
       const picture = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (!picture?.uri) throw new Error('La cámara no devolvió una fotografía.');
       const optimized = await optimizeEvidence(picture.uri);
-      if (mountedRef.current) { setEvidence((current) => current.length < 5 ? [...current, optimized] : current); setCameraOpen(false); }
+      if (mountedRef.current) { setEvidence((current) => current.length < maxEvidence ? [...current, optimized] : current); setCameraOpen(false); }
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible tomar la fotografía', 'Intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
@@ -153,8 +156,8 @@ export default function NewReportScreen() {
     imageInFlight.current = true;
     setIsCapturing(true);
     try {
-      const selectedImages = await selectEvidenceImages(5 - evidence.length);
-      if (mountedRef.current && selectedImages.length) setEvidence((current) => [...current, ...selectedImages].slice(0, 5));
+      const selectedImages = await selectEvidenceImages(maxEvidence - evidence.length);
+      if (mountedRef.current && selectedImages.length) setEvidence((current) => [...current, ...selectedImages].slice(0, maxEvidence));
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible preparar la fotografía', 'Selecciona otra imagen e intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
@@ -163,7 +166,8 @@ export default function NewReportScreen() {
   const submit = async () => {
     if (requestInFlight.current || imageInFlight.current || createdIncidentRef.current) return;
     const selectedCategory = categories.find((item) => item.name === category);
-    if (!fullName.trim() || !email.trim()) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
+    if (isGuest && (!guestName.trim() || !guestEmail.trim())) return Alert.alert('Datos de contacto', 'Ingresa tu nombre y un correo electrónico válido para identificar el reporte.');
+    if (!isGuest && (!fullName.trim() || !email.trim())) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
     if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
     if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
     if (!evidence.length) return Alert.alert('Fotografía requerida', 'Toma o selecciona al menos una fotografía del incidente antes de enviar.');
@@ -176,7 +180,9 @@ export default function NewReportScreen() {
         location,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
-        evidence
+        evidence,
+        reporterName: isGuest ? guestName : undefined,
+        reporterEmail: isGuest ? guestEmail : undefined
       });
       // Keep the identifier immediately, including for already queued submit handlers.
       createdIncidentRef.current = incident;
@@ -197,7 +203,7 @@ export default function NewReportScreen() {
         <View style={styles.successSeal}><Ionicons name="checkmark" size={38} color={colors.white} /></View>
         <Text style={styles.confirmationEyebrow}>REPORTE REGISTRADO</Text>
         <Text style={styles.confirmationTitle}>Recibimos tu reporte</Text>
-        <Text style={styles.confirmationCopy}>El caso quedó asociado a tu cuenta y ya puede consultarse en ZacApp.</Text>
+        <Text style={styles.confirmationCopy}>{isGuest ? 'El caso quedó asociado a esta sesión invitada. Conserva el código y no borres los datos de la aplicación.' : 'El caso quedó asociado a tu cuenta y ya puede consultarse en ZacApp.'}</Text>
 
         <View style={styles.codeCard}>
           <Text style={styles.codeLabel}>Código de seguimiento</Text>
@@ -236,12 +242,18 @@ export default function NewReportScreen() {
       </View>
 
       <View style={styles.form}>
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View><Text style={styles.sectionTitle}>Datos del ciudadano</Text><Text style={styles.sectionCopy}>Se obtienen de la cuenta con la sesión iniciada.</Text></View></View>
-        <View style={styles.identityCard}>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Datos del ciudadano</Text><Text style={styles.sectionCopy}>{isGuest ? 'Solo se utilizarán para identificar y dar seguimiento a este reporte.' : 'Se obtienen de la cuenta con la sesión iniciada.'}</Text></View></View>
+        {isGuest ? <View style={styles.guestIdentityForm}>
+          <Text style={styles.label}>Nombre</Text>
+          <TextInput style={styles.input} value={guestName} onChangeText={setGuestName} editable={!isSubmitting} maxLength={100} placeholder="Tu nombre" placeholderTextColor={colors.muted} />
+          <Text style={styles.label}>Correo electrónico</Text>
+          <TextInput style={styles.input} value={guestEmail} onChangeText={setGuestEmail} editable={!isSubmitting} maxLength={254} autoCapitalize="none" keyboardType="email-address" placeholder="correo@ejemplo.com" placeholderTextColor={colors.muted} />
+          <View style={styles.guestLimitNote}><Ionicons name="time-outline" size={18} color={colors.secondary} /><Text style={styles.guestLimitText}>Puedes enviar hasta cinco reportes cada 24 horas, con al menos 15 minutos entre cada uno.</Text></View>
+        </View> : <View style={styles.identityCard}>
           <View style={styles.identityIcon}><Ionicons name="person-outline" size={22} color={colors.white} /></View>
           <View style={styles.identityText}><Text style={styles.identityName}>{fullName || 'Nombre pendiente'}</Text><Text style={styles.identityEmail}>{email || 'Correo pendiente'}</Text></View>
           <Ionicons name={fullName && email ? 'checkmark-circle' : 'alert-circle'} size={22} color={fullName && email ? colors.secondary : colors.danger} />
-        </View>
+        </View>}
 
         <View style={styles.divider} />
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View><View><Text style={styles.sectionTitle}>Tipo de incidencia</Text><Text style={styles.sectionCopy}>Selecciona la categoría que mejor corresponda.</Text></View></View>
@@ -277,7 +289,7 @@ export default function NewReportScreen() {
         </Pressable>
 
         <View style={styles.divider} />
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a 5 fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/5</Text></View></View>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a {maxEvidence} fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/{maxEvidence}</Text></View></View>
         {evidence.length > 0 && (
           <View style={styles.evidenceGrid}>
             {evidence.map((item, index) => (
@@ -288,17 +300,17 @@ export default function NewReportScreen() {
             ))}
           </View>
         )}
-        {evidence.length < 5 && <View style={styles.evidenceOptions}>
+        {evidence.length < maxEvidence && <View style={styles.evidenceOptions}>
           <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={openCamera}>
             <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>{evidence.length ? 'Agregar otra fotografía' : 'Tomar fotografía'}</Text><Text style={styles.cameraButtonCopy}>Usa la cámara; se conservarán las proporciones.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
           </Pressable>
           <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={selectEvidence}>
-            <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Puedes seleccionar hasta {5 - evidence.length} {5 - evidence.length === 1 ? 'imagen' : 'imágenes'}.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+            <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Puedes seleccionar hasta {maxEvidence - evidence.length} {maxEvidence - evidence.length === 1 ? 'imagen' : 'imágenes'}.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
           </Pressable>
         </View>}
         {evidence.length > 0 && <Text style={styles.evidenceCopy}>Las imágenes se optimizan sin estirar ni recortar y se vinculan juntas al enviar el reporte.</Text>}
 
-        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || !fullName || !email} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
+        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || (isGuest ? !guestName.trim() || !guestEmail.trim() : !fullName || !email)} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
 
@@ -359,6 +371,9 @@ const styles = StyleSheet.create({
   sectionCopy: { color: colors.muted, fontSize: 12, marginTop: 2 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
   identityCard: { minHeight: 72, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  guestIdentityForm: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm },
+  guestLimitNote: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, backgroundColor: colors.softGreen, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs },
+  guestLimitText: { flex: 1, color: colors.primary, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   identityIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   identityText: { flex: 1 },
   identityName: { color: colors.text, fontSize: 15, fontWeight: '800' },

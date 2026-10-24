@@ -10,18 +10,19 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStartingGuest, setIsStartingGuest] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const passwordInputRef = useRef<TextInput>(null);
-  const { signIn, isAuthenticated, isLoading } = useSession();
+  const { signIn, signInAsGuest, isAuthenticated, isGuest, isLoading } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace('/(tabs)');
-  }, [isAuthenticated, isLoading]);
+    if (!isLoading && isAuthenticated) router.replace(isGuest ? '/report/new' : '/(tabs)');
+  }, [isAuthenticated, isGuest, isLoading]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -61,6 +62,24 @@ export default function LoginScreen() {
     }
   };
 
+  const continueAsGuest = async () => {
+    if (isStartingGuest || isSubmitting) return;
+    setErrorMessage('');
+    setIsStartingGuest(true);
+    try {
+      await signInAsGuest();
+      router.replace('/report/new');
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      if (message.includes('captcha')) setErrorMessage('Completa la verificación de seguridad para continuar.');
+      else if (message.includes('anonymous') || message.includes('guest access')) setErrorMessage('El acceso para reportar sin cuenta todavía no está habilitado en el servidor.');
+      else if (message.includes('failed to fetch') || message.includes('network')) setErrorMessage('No fue posible conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.');
+      else setErrorMessage('No fue posible iniciar el reporte rápido. Inténtalo nuevamente.');
+    } finally {
+      setIsStartingGuest(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
       <ScrollView
@@ -97,7 +116,7 @@ export default function LoginScreen() {
               keyboardType="email-address"
               placeholder="correo@zacapp.gt"
               placeholderTextColor={colors.muted}
-              editable={!isSubmitting}
+              editable={!isSubmitting && !isStartingGuest}
               onSubmitEditing={() => passwordInputRef.current?.focus()}
               onFocus={revealForm}
               returnKeyType="next"
@@ -105,7 +124,7 @@ export default function LoginScreen() {
 
             <Text style={styles.label}>Contraseña</Text>
             <View style={styles.passwordField}>
-              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting && !isStartingGuest} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 
@@ -114,10 +133,14 @@ export default function LoginScreen() {
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
+              disabled={isSubmitting || isStartingGuest}
               onPress={submit}
             />
             <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>
             <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
+            <View style={styles.guestDivider}><View style={styles.guestLine} /><Text style={styles.guestDividerText}>O reporta rápidamente</Text><View style={styles.guestLine} /></View>
+            <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Reportar sin crear cuenta'} variant="secondary" icon="megaphone-outline" disabled={isStartingGuest || isSubmitting} onPress={continueAsGuest} />
+            <Text style={styles.guestNote}>Acceso limitado a cinco reportes diarios. La fotografía y la ubicación GPS son obligatorias.</Text>
             <View style={styles.secureNote}><Ionicons name="shield-checkmark-outline" size={17} color={colors.secondary} /><Text style={styles.secureNoteText}>Acceso protegido mediante Supabase Auth.</Text></View>
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
           </View>
@@ -167,5 +190,9 @@ const styles = StyleSheet.create({
   errorBox: { backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: '#F2B8B5', borderRadius: radius.md, padding: spacing.md, marginVertical: spacing.xs },
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   forgotButton: { alignSelf: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' }
+  forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' },
+  guestDivider: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginVertical: spacing.xs },
+  guestLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  guestDividerText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  guestNote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center' }
 });

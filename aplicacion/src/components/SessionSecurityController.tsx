@@ -9,7 +9,7 @@ const BACKGROUND_SESSION_LIMIT_MS = 10 * 60 * 1000;
 
 export function SessionSecurityController() {
   const pathname = usePathname();
-  const { isAuthenticated, isLoading, signOut } = useSession();
+  const { isAuthenticated, isGuest, isLoading, signOut } = useSession();
   const signingOutRef = useRef(false);
 
   const closeExpiredSession = useCallback(async () => {
@@ -38,7 +38,7 @@ export function SessionSecurityController() {
   }, [closeExpiredSession]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || isLoading || !isAuthenticated) return;
+    if (Platform.OS === 'web' || isLoading || !isAuthenticated || isGuest) return;
 
     void verifyBackgroundTime();
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -50,18 +50,26 @@ export function SessionSecurityController() {
     });
 
     return () => subscription.remove();
-  }, [isAuthenticated, isLoading, verifyBackgroundTime]);
+  }, [isAuthenticated, isGuest, isLoading, verifyBackgroundTime]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || isLoading || !isAuthenticated) return;
 
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (pathname !== '/profile') {
-        router.replace('/profile');
+      const guestExitPath = '/report/new';
+      const accountExitPath = '/profile';
+      const exitPath = isGuest ? guestExitPath : accountExitPath;
+
+      if (pathname !== exitPath) {
+        router.replace(exitPath);
         return true;
       }
 
-      Alert.alert('Cerrar sesión', '¿Deseas cerrar sesión?', [
+      Alert.alert(
+        isGuest ? 'Salir del modo invitado' : 'Cerrar sesión',
+        isGuest
+          ? 'Si sales, perderás el acceso a los reportes vinculados a esta sesión invitada en este dispositivo. ¿Deseas continuar?'
+          : '¿Deseas cerrar sesión?', [
         { text: 'No', style: 'cancel' },
         {
           text: 'Sí',
@@ -74,12 +82,13 @@ export function SessionSecurityController() {
             })();
           }
         }
-      ]);
+        ]
+      );
       return true;
     });
 
     return () => subscription.remove();
-  }, [isAuthenticated, isLoading, pathname, signOut]);
+  }, [isAuthenticated, isGuest, isLoading, pathname, signOut]);
 
   return null;
 }
