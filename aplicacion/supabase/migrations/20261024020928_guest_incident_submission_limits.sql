@@ -172,8 +172,8 @@ create or replace function public.create_incident_with_evidence(
   p_longitude double precision,
   p_storage_paths text[],
   p_mime_type text,
-  p_reporter_name text default null,
-  p_reporter_email text default null
+  p_reporter_name text,
+  p_reporter_email text
 )
 returns table (id uuid, code text)
 language sql

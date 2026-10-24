@@ -1399,6 +1399,14 @@ test('guest migration enforces server-side identity, cooldown, daily quota and p
   assert.match(sql, /grant execute on function public\.create_incident_with_evidence[\s\S]*to authenticated/);
 });
 
+test('registered clients retain the previous atomic creation RPC while the guest-aware signature is deployed', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261024164105_restore_registered_report_rpc_compatibility.sql'), 'utf8');
+  assert.match(sql, /create or replace function public\.create_incident_with_evidence\([\s\S]*p_mime_type text\s*\)/);
+  assert.match(sql, /p_storage_paths, p_mime_type, null, null/);
+  assert.match(sql, /revoke all on function public\.create_incident_with_evidence[\s\S]*from public, anon/);
+  assert.match(sql, /grant execute on function public\.create_incident_with_evidence[\s\S]*to authenticated/);
+});
+
 test('a former citizen loses access to old self-reported incidents after becoming an operator unless assigned', async () => {
   const profile = { role: 'ciudadano', department_id: 7 };
   const incidents = [
