@@ -21,7 +21,7 @@ export function TurnstileChallenge({ siteKey, action, resetKey, onToken, onExpir
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"></script></head>
 <body><div id="captcha"></div><script>
 window.onload=function(){turnstile.render('#captcha',{sitekey:${JSON.stringify(siteKey)},action:${JSON.stringify(action)},theme:'light',size:'flexible',language:'es',callback:function(token){window.ReactNativeWebView.postMessage(JSON.stringify({type:'token',token:token}))},'expired-callback':function(){window.ReactNativeWebView.postMessage(JSON.stringify({type:'expired'}))},'error-callback':function(){window.ReactNativeWebView.postMessage(JSON.stringify({type:'error'}))}})};
-</script></body></html>`, [action, resetKey, siteKey]);
+</script></body></html>`, [action, siteKey]);
 
   return <View style={styles.card}>
     <View style={styles.heading}><Ionicons name="shield-checkmark-outline" size={20} color={colors.secondary} /><View style={styles.headingCopy}><Text style={styles.title}>Verificación de seguridad</Text><Text style={styles.copy}>Confirma que eres una persona para continuar.</Text></View></View>

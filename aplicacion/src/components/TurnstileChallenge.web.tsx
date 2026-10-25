@@ -23,7 +23,10 @@ export function TurnstileChallenge({ siteKey, action, resetKey, onToken, onExpir
   const containerId = `zacapp-turnstile-${reactId}`;
   const widgetId = useRef<string | undefined>(undefined);
   const callbacks = useRef({ onToken, onExpire, onError });
-  callbacks.current = { onToken, onExpire, onError };
+
+  useEffect(() => {
+    callbacks.current = { onToken, onExpire, onError };
+  }, [onError, onExpire, onToken]);
 
   useEffect(() => {
     let cancelled = false;

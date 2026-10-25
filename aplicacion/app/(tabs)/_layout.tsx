@@ -1,6 +1,5 @@
 import { Redirect, router, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import type { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs';
 import type { ComponentProps } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
@@ -11,6 +10,7 @@ import { LoadingState } from '@/components/DataState';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
+type BottomTabBarProps = Parameters<NonNullable<ComponentProps<typeof Tabs>['tabBar']>>[0];
 
 const citizenNavigation = [
   { name: 'index', title: 'Inicio', icon: 'home-outline' },
@@ -44,7 +44,7 @@ const employeeNavigation = [
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
-function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: UserRole }) {
+function WebSidebar({ state, emitter, navigateToTab, role }: BottomTabBarProps & { role: UserRole }) {
   const [expanded, setExpanded] = useState(true);
   const { signOut, department } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
@@ -92,8 +92,8 @@ function WebSidebar({ state, navigation, role }: BottomTabBarProps & { role: Use
               accessibilityLabel={item.title}
               style={[styles.navItem, !expanded && styles.navItemCollapsed, active && styles.navItemActive, active && isStaff && styles.adminNavItemActive]}
               onPress={() => {
-                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-                if (!event.defaultPrevented) navigation.navigate(route.name);
+                const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!event.defaultPrevented) navigateToTab(route.key);
               }}
             >
               <Ionicons name={item.icon} size={21} color={active ? (isStaff ? accent : colors.primary) : (isStaff ? '#B9C5D5' : colors.muted)} />
@@ -169,12 +169,12 @@ export default function TabsLayout() {
         tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : { fontSize: 11, fontWeight: '700' }
       }}
     >
-      <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={color} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={String(color)} size={size} /> }} />
       <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIconStyle: !isWeb ? styles.centerTabIconSlot : undefined, tabBarLabelStyle: !isWeb ? styles.centerTabLabel : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
-      <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={color} size={size} /> }} />
-      <Tabs.Screen name="profile" options={{ title: 'Perfil', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={color} size={size} /> }} />
+      <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="profile" options={{ title: 'Perfil', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={String(color)} size={size} /> }} />
     </Tabs>
   );
 }
