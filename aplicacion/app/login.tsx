@@ -147,7 +147,7 @@ export default function LoginScreen() {
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
 
-            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={(token) => { setCaptchaToken(token); setErrorMessage(''); }} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
 
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
