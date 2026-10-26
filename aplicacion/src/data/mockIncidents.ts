@@ -11,8 +11,6 @@ export const mockIncidents: Incident[] = [
     status: 'EN_ATENCION',
     createdAt: '2026-09-07',
     updatedAt: '2026-09-09',
-    citizenName: 'Daniela Cruz',
-    citizenEmail: 'ciudadano@zacapp.gt',
     department: 'EEMZA',
     priority: 'ALTA',
     progress: 70
@@ -27,8 +25,6 @@ export const mockIncidents: Incident[] = [
     status: 'ASIGNADO',
     createdAt: '2026-09-08',
     updatedAt: '2026-09-10',
-    citizenName: 'Daniela Cruz',
-    citizenEmail: 'ciudadano@zacapp.gt',
     department: 'Agua',
     priority: 'URGENTE',
     progress: 45
@@ -43,8 +39,6 @@ export const mockIncidents: Incident[] = [
     status: 'CERRADO',
     createdAt: '2026-09-01',
     updatedAt: '2026-09-06',
-    citizenName: 'Daniela Cruz',
-    citizenEmail: 'ciudadano@zacapp.gt',
     department: 'Desechos',
     priority: 'MEDIA',
     progress: 100
@@ -59,8 +53,6 @@ export const mockIncidents: Incident[] = [
     status: 'EN_REVISION',
     createdAt: '2026-09-11',
     updatedAt: '2026-09-12',
-    citizenName: 'Mario Lemus',
-    citizenEmail: 'mario.lemus@zacapp.gt',
     department: 'Drenajes',
     priority: 'ALTA',
     progress: 25
@@ -75,8 +67,6 @@ export const mockIncidents: Incident[] = [
     status: 'REGISTRADO',
     createdAt: '2026-09-13',
     updatedAt: '2026-09-13',
-    citizenName: 'Ana Morales',
-    citizenEmail: 'ana.morales@zacapp.gt',
     department: 'EEMZA',
     priority: 'URGENTE',
     progress: 10
@@ -91,8 +81,6 @@ export const mockIncidents: Incident[] = [
     status: 'POR_VERIFICAR',
     createdAt: '2026-09-09',
     updatedAt: '2026-09-14',
-    citizenName: 'Luis Herrera',
-    citizenEmail: 'luis.herrera@zacapp.gt',
     department: 'Agua',
     priority: 'MEDIA',
     progress: 85

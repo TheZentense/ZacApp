@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
@@ -18,7 +18,7 @@ const profileContent = {
 export default function ProfileScreen() {
   const { width } = useWindowDimensions();
   const isCompact = width < 480;
-  const { role, email, fullName, phone, department, isGuest, signOut, updatePassword, updateProfile } = useSession();
+  const { role, email, fullName, phone, department, isGuest, biometricAvailable, biometricEnabled, enableBiometrics, disableBiometrics, signOut, updatePassword, updateProfile } = useSession();
   const content = profileContent[role];
   const visual = roleVisuals[role];
   const isCitizen = role === 'citizen';
@@ -35,6 +35,24 @@ export default function ProfileScreen() {
   const [profileError, setProfileError] = useState('');
   const [profileMessage, setProfileMessage] = useState('');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [biometricMessage, setBiometricMessage] = useState('');
+
+  const toggleBiometrics = async () => {
+    setBiometricMessage('');
+    setBiometricBusy(true);
+    try {
+      if (biometricEnabled) {
+        await disableBiometrics();
+        setBiometricMessage('El desbloqueo biométrico se desactivó en este dispositivo.');
+      } else {
+        const enabled = await enableBiometrics();
+        setBiometricMessage(enabled ? 'La biometría quedó activada para esta cuenta en este dispositivo.' : 'No se completó la verificación biométrica.');
+      }
+    } catch {
+      setBiometricMessage('No fue posible cambiar el acceso biométrico. Comprueba la sesión y vuelve a intentarlo.');
+    } finally { setBiometricBusy(false); }
+  };
 
   const submitProfile = async () => {
     setProfileError(''); setProfileMessage('');
@@ -85,7 +103,7 @@ export default function ProfileScreen() {
 
         <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>IDENTIDAD DIGITAL</Text><Text style={styles.sectionTitle}>{isGuest ? 'Información de la sesión' : 'Información de la cuenta'}</Text></View>
         <View style={styles.card}>
-          <InfoRow icon="mail-outline" label="Correo" value={isGuest ? 'Se registra en cada reporte' : email} />
+          <InfoRow icon="mail-outline" label="Correo" value={isGuest ? 'No se solicita para reportar' : email} />
           {!isGuest && <InfoRow icon="call-outline" label="Teléfono" value={phone || 'No registrado'} />}
           <InfoRow icon="location-outline" label="Municipio" value="Zacapa" />
           <InfoRow icon="business-outline" label={isCitizen ? 'Acceso' : 'Área'} value={isGuest ? 'Reportes ciudadanos sin cuenta' : isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
@@ -102,7 +120,7 @@ export default function ProfileScreen() {
         </View>}
         {profileMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{profileMessage}</Text></View> : null}
 
-        {!isGuest && <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>Cambia tu contraseña verificando primero la actual.</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>}
+        {!isGuest && <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>{Platform.OS === 'android' ? 'Cambia tu contraseña o configura el desbloqueo biométrico.' : 'Cambia tu contraseña verificando primero la actual.'}</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>}
         {showSecurityForm && <View style={styles.passwordCard}>
           <Text style={styles.passwordTitle}>Cambiar contraseña</Text>
           <Text style={styles.label}>Contraseña actual</Text><TextInput value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Contraseña actual" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
@@ -110,6 +128,13 @@ export default function ProfileScreen() {
           <Text style={styles.label}>Confirmar contraseña nueva</Text><TextInput value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Repite la contraseña nueva" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
           {passwordError ? <View style={styles.errorBox}><Text style={styles.errorText}>{passwordError}</Text></View> : null}
           <AppButton label={isUpdatingPassword ? 'Actualizando...' : 'Actualizar contraseña'} icon="key-outline" disabled={isUpdatingPassword} onPress={submitPassword} />
+        </View>}
+        {showSecurityForm && Platform.OS === 'android' && !isGuest && <View style={styles.passwordCard}>
+          <Text style={styles.passwordTitle}>Desbloqueo biométrico</Text>
+          <Text style={styles.securityCopy}>Actívalo en este dispositivo para volver a tu sesión con biometría fuerte. Siempre podrás usar la contraseña de tu cuenta.</Text>
+          {!biometricAvailable && <Text style={styles.securityCopy}>Este dispositivo necesita una huella o biometría fuerte registrada para habilitarlo.</Text>}
+          <AppButton label={biometricBusy ? 'Verificando...' : biometricEnabled ? 'Desactivar biometría' : 'Activar biometría'} icon="finger-print-outline" disabled={biometricBusy || (!biometricAvailable && !biometricEnabled)} onPress={() => { void toggleBiometrics(); }} />
+          {biometricMessage ? <Text style={styles.securityCopy}>{biometricMessage}</Text> : null}
         </View>}
         {passwordMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{passwordMessage}</Text></View> : null}
         {isGuest && <View style={styles.guestNotice}><Ionicons name="information-circle-outline" size={21} color={colors.secondary} /><Text style={styles.guestNoticeText}>Esta sesión conserva el acceso a tus reportes en este dispositivo. No cierres sesión hasta terminar el seguimiento.</Text></View>}

@@ -12,6 +12,15 @@
         "buildType": "apk"
       }
     },
+    "biometric-test": {
+      "extends": "preview",
+      "environment": "preview",
+      "channel": "biometric-test",
+      "env": {
+        "ZACAPP_BUILD_VARIANT": "biometric-test",
+        "EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED": "false"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production"

@@ -7,8 +7,6 @@ type NewDemoReportInput = {
   description: string;
   location: string;
   priority: IncidentPriority;
-  citizenEmail: string;
-  citizenName: string;
   evidenceAttached: boolean;
 };
 
@@ -50,8 +48,6 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           status: 'REGISTRADO',
           createdAt: now,
           updatedAt: now,
-          citizenName: input.citizenName,
-          citizenEmail: input.citizenEmail,
           department: departmentByCategory[input.category] ?? 'Infraestructura',
           priority: input.priority,
           progress: 10,

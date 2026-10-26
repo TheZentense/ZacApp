@@ -12,6 +12,7 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { optimizeEvidence, selectEvidenceImages } from '@/services/evidenceImages';
 import { TurnstileChallenge } from '@/components/TurnstileChallenge';
+import { guestReportProtectionEnabled } from '@/lib/guestReportSecurity';
 
 const previewCategories: ReportCategory[] = [
   { id: 1, name: 'Alumbrado público' },
@@ -58,6 +59,8 @@ export default function NewReportScreen() {
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
   const captchaRequired = Boolean(captchaSiteKey);
   const isAnonymousReport = isGuest || !isAuthenticated;
+  const protectedGuestFlow = isSupabaseConfigured && isAnonymousReport && guestReportProtectionEnabled();
+  const captchaAction = protectedGuestFlow && isAuthenticated ? 'zacapp_reporte_envio' : 'zacapp_reporte_anonimo';
   const maxEvidence = isAnonymousReport ? 3 : 5;
   const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
@@ -175,18 +178,26 @@ export default function NewReportScreen() {
     if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
     if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
     if (!evidence.length) return Alert.alert('Fotografía requerida', 'Toma o selecciona al menos una fotografía del incidente antes de enviar.');
-    if (!isAuthenticated && captchaRequired && !captchaToken) return Alert.alert('Verificación requerida', 'Confirma que eres una persona antes de enviar el reporte.');
+    if (protectedGuestFlow && !captchaSiteKey) return Alert.alert('Verificación no disponible', 'Este dispositivo todavía no tiene configurada la verificación de reportes invitados.');
+    if ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken) return Alert.alert('Verificación requerida', 'Confirma que eres una persona antes de enviar el reporte.');
     requestInFlight.current = true;
     setIsSubmitting(true);
     try {
-      if (!isAuthenticated) await signInAsGuest(captchaToken || undefined);
+      if (!isAuthenticated) {
+        await signInAsGuest(captchaToken || undefined);
+        if (protectedGuestFlow) {
+          if (mountedRef.current) Alert.alert('Sesión invitada lista', 'Completa una verificación nueva para enviar este reporte.');
+          return;
+        }
+      }
       const incident = await createReport({
         categoryId: selectedCategory.id,
         description,
         location,
         latitude: coordinates.latitude,
         longitude: coordinates.longitude,
-        evidence
+        evidence,
+        turnstileToken: protectedGuestFlow ? captchaToken : undefined
       });
       // Keep the identifier immediately, including for already queued submit handlers.
       createdIncidentRef.current = incident;
@@ -197,7 +208,7 @@ export default function NewReportScreen() {
       requestInFlight.current = false;
       if (mountedRef.current) {
         setIsSubmitting(false);
-        if (!createdIncidentRef.current && captchaRequired) resetCaptcha();
+        if (captchaRequired && (protectedGuestFlow || !createdIncidentRef.current)) resetCaptcha();
       }
     }
   };
@@ -319,8 +330,10 @@ export default function NewReportScreen() {
 
         <View style={styles.formFooter}>
           <View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>{isAnonymousReport ? 'Las fotografías y la ubicación GPS quedarán vinculadas de forma segura al reporte, sin solicitar correo.' : 'Tus datos, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.'}</Text></View>
-          {!isAuthenticated && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_reporte_anonimo" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); Alert.alert('Verificación no disponible', 'No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
-          <AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || (isAuthenticated && !isGuest && (!fullName || !email)) || (!isAuthenticated && captchaRequired && !captchaToken)} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} />
+          {protectedGuestFlow && !isAuthenticated ? <Text style={styles.privacyText}>Primero inicia una sesión invitada. Después completa una verificación nueva para este reporte.</Text> : null}
+          {protectedGuestFlow && isGuest ? <Text style={styles.privacyText}>Cada reporte requiere una verificación nueva, incluso si ya ingresaste como invitado.</Text> : null}
+          {(!isAuthenticated || protectedGuestFlow) && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action={captchaAction} resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); Alert.alert('Verificación no disponible', 'No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+          <AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || (isAuthenticated && !isGuest && (!fullName || !email)) || (protectedGuestFlow && !captchaSiteKey) || ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken)} label={isSubmitting ? protectedGuestFlow && !isAuthenticated ? 'Preparando sesión...' : `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : protectedGuestFlow && !isAuthenticated ? 'Continuar como invitado' : 'Enviar reporte'} icon="send-outline" onPress={submit} />
         </View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>

@@ -68,6 +68,28 @@ const dashboards: Record<UserRole, Dashboard> = {
   }
 };
 
+const departmentDashboard: Dashboard = {
+  title: 'Mi departamento',
+  copy: 'Consulta los reportes de tu área y revisa sus avances.',
+  actions: [
+    { title: 'Reportes del departamento', copy: 'Casos canalizados a tu área', icon: 'document-text-outline', route: '/reports' },
+    { title: 'Seguimiento del departamento', copy: 'Historial y evidencias autorizados', icon: 'git-branch-outline', route: '/tracking' },
+    { title: 'Funciones', copy: 'Herramientas disponibles para tu rol', icon: 'apps-outline', route: '/admin-menu' }
+  ],
+  activity: 'Actividad del departamento'
+};
+
+const supervisorDashboard: Dashboard = {
+  title: 'Supervisión municipal',
+  copy: 'Consulta los reportes y el avance de todos los departamentos.',
+  actions: [
+    { title: 'Reportes generales', copy: 'Casos de todos los departamentos', icon: 'document-text-outline', route: '/reports' },
+    { title: 'Seguimiento general', copy: 'Historial y evidencias autorizados', icon: 'git-branch-outline', route: '/tracking' },
+    { title: 'Funciones', copy: 'Herramientas de supervisión', icon: 'options-outline', route: '/admin-menu' }
+  ],
+  activity: 'Actividad de todos los departamentos'
+};
+
 function buildReportStats(role: UserRole, incidents: Incident[]): { label: string; value: string; icon: keyof typeof Ionicons.glyphMap }[] {
   const count = (...statuses: Incident['status'][]) => incidents.filter((incident) => statuses.includes(incident.status)).length.toString();
   const closed = count('CERRADO');
@@ -114,7 +136,8 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const { role, department, databaseRole } = useSession();
   const permissions = workflowPermissionsFor(databaseRole);
-  const content = dashboards[role];
+  const departmentViewer = databaseRole === 'coordinador' || databaseRole === 'comunicacion';
+  const content = databaseRole === 'supervisor' ? supervisorDashboard : departmentViewer ? departmentDashboard : dashboards[role];
   const visual = roleVisuals[role];
   const isWide = width >= 900;
   const isCompact = width < 600;
@@ -122,7 +145,7 @@ export default function HomeScreen() {
   const pending = reportReadScopeFor(databaseRole) === 'pending' && (!isPreview || permissions.operator);
   const dataUnavailable = isLoading || Boolean(error) || isPreview;
   const visibleIncidents = isPreview ? [] : incidents.slice(0, 2);
-  const reportStats = useMemo(() => buildReportStats(role, incidents), [incidents, role]);
+  const reportStats = useMemo(() => buildReportStats(departmentViewer ? 'maintenance' : role, incidents), [departmentViewer, incidents, role]);
   const reportPulse = useMemo(() => buildReportPulse(role, incidents), [incidents, role]);
   const departmentWorkload = useMemo(() => {
     const totals = new Map<string, number>();
@@ -133,7 +156,7 @@ export default function HomeScreen() {
   const priorityIncident = useMemo(() => incidents
     .filter((item) => item.status !== 'CERRADO' && item.status !== 'RECHAZADO')[0], [incidents]);
   const dashboardCopy = (role === 'maintenance' || role === 'employee') && department
-    ? role === 'maintenance' ? `Reportes canalizados a ${department}.` : 'Consulta únicamente las tareas asignadas a tu cuenta.'
+    ? role === 'maintenance' || departmentViewer ? `Reportes canalizados a ${department}.` : 'Consulta únicamente las tareas asignadas a tu cuenta.'
     : content.copy;
 
   if (pending) return <ScrollView style={[styles.scroll, { backgroundColor: visual.background }]} contentContainerStyle={styles.page}><View style={[styles.hero, styles.heroCompact, { backgroundColor: visual.primary }]}><Text style={styles.heading}>Consulta no disponible</Text><Text style={styles.copy}>Esta cuenta todavía no tiene una consulta de reportes habilitada.</Text></View><AppButton label="Mi perfil" variant="secondary" onPress={() => router.push('/profile')} /></ScrollView>;
