@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
@@ -18,7 +18,7 @@ const profileContent = {
 export default function ProfileScreen() {
   const { width } = useWindowDimensions();
   const isCompact = width < 480;
-  const { role, email, fullName, phone, department, signOut, updatePassword, updateProfile } = useSession();
+  const { role, email, fullName, phone, department, isGuest, signOut, updatePassword, updateProfile } = useSession();
   const content = profileContent[role];
   const visual = roleVisuals[role];
   const isCitizen = role === 'citizen';
@@ -76,23 +76,23 @@ export default function ProfileScreen() {
         <View style={[styles.profileHeader, isCompact && styles.profileHeaderCompact, { backgroundColor: visual.primary }]}>
           <View style={[styles.avatar, isCompact && styles.avatarCompact, { backgroundColor: visual.accent }]}><Text style={[styles.initials, isCompact && styles.initialsCompact, { color: visual.primary }]}>{content.initials}</Text></View>
           <View style={styles.identity}>
-            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · CUENTA</Text>
-            <Text style={styles.name}>{fullName || content.name}</Text>
-            <Text style={styles.role}>{department ? `${content.role} · ${department}` : `${content.role} · Zacapa`}</Text>
+            <Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · {isGuest ? 'SESIÓN INVITADA' : 'CUENTA'}</Text>
+            <Text style={styles.name}>{isGuest ? 'Ciudadano invitado' : fullName || content.name}</Text>
+            <Text style={styles.role}>{isGuest ? 'Acceso temporal para reportar y consultar' : department ? `${content.role} · ${department}` : `${content.role} · Zacapa`}</Text>
           </View>
-          <View style={styles.verified}><Ionicons name="shield-checkmark" size={18} color={visual.accent} /><Text style={styles.verifiedText}>Verificada</Text></View>
+          <View style={styles.verified}><Ionicons name={isGuest ? 'phone-portrait-outline' : 'shield-checkmark'} size={18} color={visual.accent} /><Text style={styles.verifiedText}>{isGuest ? 'Este dispositivo' : 'Verificada'}</Text></View>
         </View>
 
-        <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>IDENTIDAD DIGITAL</Text><Text style={styles.sectionTitle}>Información de la cuenta</Text></View>
+        <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>IDENTIDAD DIGITAL</Text><Text style={styles.sectionTitle}>{isGuest ? 'Información de la sesión' : 'Información de la cuenta'}</Text></View>
         <View style={styles.card}>
-          <InfoRow icon="mail-outline" label="Correo" value={email} />
-          <InfoRow icon="call-outline" label="Teléfono" value={phone || 'No registrado'} />
+          <InfoRow icon="mail-outline" label="Correo" value={isGuest ? 'Se registra en cada reporte' : email} />
+          {!isGuest && <InfoRow icon="call-outline" label="Teléfono" value={phone || 'No registrado'} />}
           <InfoRow icon="location-outline" label="Municipio" value="Zacapa" />
-          <InfoRow icon="business-outline" label={isCitizen ? 'Acceso' : 'Área'} value={isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
-          <InfoRow icon="key-outline" label="Rol actual" value={content.role} />
+          <InfoRow icon="business-outline" label={isCitizen ? 'Acceso' : 'Área'} value={isGuest ? 'Reportes ciudadanos sin cuenta' : isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
+          <InfoRow icon="key-outline" label="Rol actual" value={isGuest ? 'Invitado' : content.role} />
         </View>
 
-        <Pressable style={styles.securityCard} onPress={() => { setShowProfileForm((value) => !value); setProfileName(fullName); setProfilePhone(phone); setProfileError(''); setProfileMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="create-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Editar información</Text><Text style={styles.securityCopy}>Actualiza el nombre y teléfono asociados a tu cuenta.</Text></View><Ionicons name={showProfileForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {!isGuest && <Pressable style={styles.securityCard} onPress={() => { setShowProfileForm((value) => !value); setProfileName(fullName); setProfilePhone(phone); setProfileError(''); setProfileMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="create-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Editar información</Text><Text style={styles.securityCopy}>Actualiza el nombre y teléfono asociados a tu cuenta.</Text></View><Ionicons name={showProfileForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>}
         {showProfileForm && <View style={styles.passwordCard}>
           <Text style={styles.passwordTitle}>Información personal</Text>
           <Text style={styles.label}>Nombre completo</Text><TextInput value={profileName} onChangeText={setProfileName} maxLength={100} autoCapitalize="words" placeholder="Nombre completo" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingProfile} />
@@ -102,7 +102,7 @@ export default function ProfileScreen() {
         </View>}
         {profileMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{profileMessage}</Text></View> : null}
 
-        <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>Cambia tu contraseña verificando primero la actual.</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {!isGuest && <Pressable style={styles.securityCard} onPress={() => { setShowSecurityForm((value) => !value); setPasswordError(''); setPasswordMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="lock-closed-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Seguridad de la cuenta</Text><Text style={styles.securityCopy}>Cambia tu contraseña verificando primero la actual.</Text></View><Ionicons name={showSecurityForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>}
         {showSecurityForm && <View style={styles.passwordCard}>
           <Text style={styles.passwordTitle}>Cambiar contraseña</Text>
           <Text style={styles.label}>Contraseña actual</Text><TextInput value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Contraseña actual" placeholderTextColor={colors.muted} style={styles.input} editable={!isUpdatingPassword} />
@@ -112,7 +112,15 @@ export default function ProfileScreen() {
           <AppButton label={isUpdatingPassword ? 'Actualizando...' : 'Actualizar contraseña'} icon="key-outline" disabled={isUpdatingPassword} onPress={submitPassword} />
         </View>}
         {passwordMessage ? <View style={styles.successBox}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.successText}>{passwordMessage}</Text></View> : null}
-        <AppButton label="Cerrar sesión" variant="secondary" icon="log-out-outline" onPress={async () => { await signOut(); router.replace('/login'); }} />
+        {isGuest && <View style={styles.guestNotice}><Ionicons name="information-circle-outline" size={21} color={colors.secondary} /><Text style={styles.guestNoticeText}>Esta sesión conserva el acceso a tus reportes en este dispositivo. No cierres sesión hasta terminar el seguimiento.</Text></View>}
+        <AppButton label={isGuest ? 'Salir del modo invitado' : 'Cerrar sesión'} variant="secondary" icon="log-out-outline" onPress={() => {
+          const finish = async () => { await signOut(); router.replace('/login'); };
+          if (!isGuest) return void finish();
+          Alert.alert('Salir del modo invitado', 'Perderás el acceso a los reportes asociados a esta sesión en este dispositivo. ¿Deseas continuar?', [
+            { text: 'No', style: 'cancel' },
+            { text: 'Sí, salir', style: 'destructive', onPress: () => { void finish(); } }
+          ]);
+        }} />
       </View>
     </ScrollView>
   );
@@ -163,5 +171,7 @@ const styles = StyleSheet.create({
   errorBox: { borderRadius: radius.md, backgroundColor: colors.dangerSoft, padding: spacing.md },
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '700' },
   successBox: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  successText: { flex: 1, color: colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' }
+  successText: { flex: 1, color: colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  guestNotice: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  guestNoticeText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' }
 });

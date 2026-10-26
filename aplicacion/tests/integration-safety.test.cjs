@@ -135,7 +135,8 @@ test('creation uploads one to five JPEGs before a single atomic RPC without dire
     assert.match(result.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.deepEqual(JSON.parse(JSON.stringify(parameters)), {
       p_incident_id: result.id, p_category_id: 1, p_description: 'Falla de prueba local', p_address_reference: 'Ubicación local',
-      p_latitude: 14.97, p_longitude: -89.53, p_storage_paths: uploads.map((upload) => upload.storagePath), p_mime_type: 'image/jpeg'
+      p_latitude: 14.97, p_longitude: -89.53, p_storage_paths: uploads.map((upload) => upload.storagePath), p_mime_type: 'image/jpeg',
+      p_reporter_name: null, p_reporter_email: null
     });
     for (const [index, upload] of uploads.entries()) {
       assert.match(upload.storagePath, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\//);
@@ -151,6 +152,30 @@ test('creation uploads one to five JPEGs before a single atomic RPC without dire
     assert.ok(category.filters.some(([key, value]) => key === 'active' && value === true));
     assert.ok(!calls.some((call) => ['insert', 'update', 'remove', 'sign'].includes(call.operation)));
   }
+});
+
+test('guest creation accepts one to three JPEGs without contact data and uses an isolated storage path', async () => {
+  const { client, calls } = creationClientDouble({
+    auth: { getUser: async () => ({ data: { user: { id: 'guest-id', is_anonymous: true } }, error: null }) }
+  });
+  const result = await reportsWithPhotos(client).createReport(reportInput(3));
+  const uploads = calls.filter((call) => call.operation === 'upload');
+  assert.equal(uploads.length, 3);
+  assert.ok(uploads.every((upload) => upload.storagePath.includes(`/${result.id}/invitado-guest-id/`)));
+  const rpc = calls.find((call) => call.operation === 'rpc');
+  assert.equal(rpc.parameters.p_reporter_name, null);
+  assert.equal(rpc.parameters.p_reporter_email, null);
+});
+
+test('guest creation rejects a fourth photo before reading files, uploading or calling the RPC', async () => {
+  const { client, calls } = creationClientDouble({
+    auth: { getUser: async () => ({ data: { user: { id: 'guest-id', is_anonymous: true } }, error: null }) }
+  });
+  await assert.rejects(
+    reportsWithPhotos(client).createReport({ ...reportInput(4), reporterName: 'Ana Invitada', reporterEmail: 'ana@example.com' }),
+    /una y tres fotografías JPEG/
+  );
+  assert.equal(calls.length, 0);
 });
 
 test('creation rejects unauthenticated users and invalid evidence before storage or RPC', async () => {
@@ -888,11 +913,12 @@ function reportScreenHarness(client, File, options = {}) {
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
     '@/components/AppButton': { AppButton: 'AppButton' },
     '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
+    '@/components/TurnstileChallenge': { TurnstileChallenge: 'TurnstileChallenge' },
     '@/lib/supabase': { supabase: client, isSupabaseConfigured: true },
-    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, ...options.session }) },
+    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
     'expo-image-picker': { launchImageLibraryAsync: options.pickImages ?? (async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] })) },
     'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, height: 600, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
-  });
+  }, { process: { env: {} } });
   const screen = load('app/report/new.tsx').default;
   return { alerts, locationCalls, render() { index = 0; return screen(); }, mount() { return effects.splice(0).map((effect) => effect()); } };
 }
@@ -970,6 +996,40 @@ test('the gallery honors the remaining five-photo limit and the screen sends all
   assert.equal(rpcs.length, 1);
   assert.equal(rpcs[0].parameters.p_storage_paths.length, 5);
   assert.deepEqual(harness.alerts, []);
+});
+
+test('the guest report screen requests no contact data and limits evidence selection to three photos', async () => {
+  const { client, calls } = creationClientDouble({
+    auth: { getUser: async () => ({ data: { user: { id: 'guest-id', is_anonymous: true } }, error: null }) }
+  });
+  const selections = [];
+  const harness = reportScreenHarness(client, LocalPhotoDouble, {
+    session: { isGuest: true, fullName: 'Ciudadano invitado', email: '' },
+    pickImages: async (config) => {
+      selections.push(config);
+      return { canceled: false, assets: Array.from({ length: 3 }, (_, index) => ({ uri: `file:///cache/guest-${index}.jpg` })) };
+    }
+  });
+  harness.render(); harness.mount(); await new Promise(setImmediate);
+  let tree = harness.render();
+  const inputs = nodes(tree).filter((node) => node.type === 'TextInput');
+  assert.equal(inputs.length, 2);
+  inputs[0].props.onChangeText('Falla de prueba invitada');
+  inputs[1].props.onChangeText('Ubicación de prueba');
+  await pressLocation(harness.render());
+  tree = harness.render();
+  await nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Elegir de galería')).props.onPress();
+  assert.equal(selections[0].selectionLimit, 3);
+  tree = harness.render();
+  assert.equal(nodes(tree).filter((node) => node.props?.accessibilityLabel?.startsWith('Quitar fotografía')).length, 3);
+  assert.ok(nodes(tree).some((node) => Array.isArray(node.props?.children) && node.props.children.join('') === '3/3'));
+  const submit = nodes(tree).find((node) => node.props?.label === 'Enviar reporte');
+  assert.equal(submit.props.disabled, false);
+  await submit.props.onPress();
+  const rpc = calls.find((call) => call.operation === 'rpc');
+  assert.equal(rpc.parameters.p_reporter_name, null);
+  assert.equal(rpc.parameters.p_reporter_email, null);
+  assert.ok(calls.filter((call) => call.operation === 'upload').every((call) => call.storagePath.includes('/invitado-guest-id/')));
 });
 
 test('the screen retries creation after a failed photo read and blocks overlapping or queued submits', async () => {
@@ -1083,11 +1143,30 @@ test('mobile session protection returns to profile, confirms sign out and expire
   assert.match(source, /10 \* 60 \* 1000/);
   assert.match(source, /nextState === 'background'/);
   assert.match(source, /nextState === 'active'/);
-  assert.match(source, /pathname !== '\/profile'/);
-  assert.match(source, /router\.replace\('\/profile'\)/);
-  assert.match(source, /Alert\.alert\('Cerrar sesión', '¿Deseas cerrar sesión\?'/);
+  assert.match(source, /isAuthenticated \|\| isGuest/);
+  assert.match(source, /const guestExitPath = '\/report\/new'/);
+  assert.match(source, /const accountExitPath = '\/profile'/);
+  assert.match(source, /isGuest \? 'Salir del modo invitado' : 'Cerrar sesión'/);
+  assert.match(source, /perderás el acceso a los reportes vinculados/i);
   assert.match(source, /text: 'No'/);
   assert.match(source, /text: 'Sí'/);
+});
+
+test('the session provider exposes an anonymous identity as an authenticated citizen guest', async () => {
+  const { client } = clientDouble(() => ({ data: { full_name: 'Ciudadano invitado', role: 'ciudadano', department_id: null, department: null }, error: null }));
+  client.auth.getSession = async () => ({ data: { session: { user: { id: 'guest-id', email: null, is_anonymous: true, user_metadata: {} } } }, error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client);
+  harness.render();
+  const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  const session = harness.render();
+  assert.equal(session.isAuthenticated, true);
+  assert.equal(session.isGuest, true);
+  assert.equal(session.role, 'citizen');
+  assert.equal(session.userId, 'guest-id');
+  assert.equal(session.email, '');
+  cleanups.forEach((cleanup) => cleanup?.());
 });
 
 test('a delayed administrative profile cannot replace a newer citizen identity', async () => {
@@ -1276,7 +1355,13 @@ test('effective read policies have no surviving departmental or storage-owner by
     'storage.objects:users read permitted incident evidence'
   ].sort());
   const creators = [...policies.values()].filter((policy) => policy.table === 'public.incidents' && ['all', 'insert'].includes(policy.command));
-  assert.deepEqual(creators.map((policy) => policy.name), ['citizens create own incidents']);
+  assert.deepEqual(creators.map((policy) => policy.name).sort(), [
+    'citizens create own incidents', 'guests use controlled incident creation'
+  ]);
+  const guestInsertGuard = policies.get('public.incidents:guests use controlled incident creation');
+  assert.equal(guestInsertGuard.file, '20261024020928_guest_incident_submission_limits.sql');
+  assert.match(guestInsertGuard.sql, /as restrictive for insert to authenticated/);
+  assert.match(guestInsertGuard.sql, /is_anonymous.*false/);
   const staff = policies.get('public.incidents:staff read permitted incidents').sql;
   assert.match(staff, /current_user_is_active\(\)/);
   assert.ok(staff.includes("(select private.current_user_role()) = 'operador' and assigned_to = (select auth.uid())"));
@@ -1296,6 +1381,49 @@ test('effective read policies have no surviving departmental or storage-owner by
   assert.match(storage, /bucket_id = 'incidente-evidencia'/);
   assert.match(storage, /e\.storage_path = name and \(select private\.current_user_can_read_incident\(e\.incident_id\)\)/);
   assert.doesNotMatch(storage, /storage\.foldername|owner_id/);
+});
+
+test('guest migration enforces server-side identity, cooldown, daily quota and private evidence ownership', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261024020928_guest_incident_submission_limits.sql'), 'utf8');
+  assert.match(sql, /auth\.jwt\(\) ->> 'is_anonymous'/);
+  assert.match(sql, /pg_advisory_xact_lock/);
+  assert.match(sql, /interval '15 minutes'/);
+  assert.match(sql, /interval '24 hours'/);
+  assert.match(sql, /\) >= 5 then raise exception 'Guest daily report limit reached'/);
+  assert.match(sql, /if evidence_count > 3 then raise exception 'Guest evidence limit exceeded'/);
+  assert.match(sql, /p\.status = 'ACTIVO' and p\.role = 'ciudadano'/);
+  assert.match(sql, /o\.owner_id = current_user_id::text/);
+  assert.match(sql, /then 'invitado-' \|\| \(select auth\.uid\(\)\)::text/);
+  assert.match(sql, /revoke all on function public\.create_incident_with_evidence[\s\S]*from public, anon/);
+  assert.match(sql, /grant execute on function public\.create_incident_with_evidence[\s\S]*to authenticated/);
+});
+
+test('anonymous report migration keeps GPS and abuse controls while allowing null contact snapshots', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261026041951_allow_anonymous_reports_without_contact.sql'), 'utf8');
+  assert.match(sql, /submission_kind = 'INVITADO'/);
+  assert.match(sql, /current_name := null/);
+  assert.match(sql, /current_email := null/);
+  assert.match(sql, /interval '15 minutes'/);
+  assert.match(sql, /interval '24 hours'/);
+  assert.match(sql, /Guest daily report limit reached/);
+  assert.match(sql, /Valid GPS coordinates required/);
+  assert.match(sql, /o\.owner_id = current_user_id::text/);
+  assert.doesNotMatch(sql, /Valid guest email required|Guest name required/);
+});
+
+test('public report categories expose only the active catalog fields before anonymous sign-in', () => {
+  const migration = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261026052000_allow_public_active_report_categories.sql'), 'utf8');
+  assert.match(migration, /grant select \(id, name, active\) on public\.categories to anon/i);
+  assert.match(migration, /for select\s+to anon\s+using \(active = true\)/i);
+  assert.doesNotMatch(migration, /grant select[^;]*on public\.(incidents|profiles|departments|incident_evidence)/i);
+});
+
+test('registered clients retain the previous atomic creation RPC while the guest-aware signature is deployed', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261024164105_restore_registered_report_rpc_compatibility.sql'), 'utf8');
+  assert.match(sql, /create or replace function public\.create_incident_with_evidence\([\s\S]*p_mime_type text\s*\)/);
+  assert.match(sql, /p_storage_paths, p_mime_type, null, null/);
+  assert.match(sql, /revoke all on function public\.create_incident_with_evidence[\s\S]*from public, anon/);
+  assert.match(sql, /grant execute on function public\.create_incident_with_evidence[\s\S]*to authenticated/);
 });
 
 test('a former citizen loses access to old self-reported incidents after becoming an operator unless assigned', async () => {
@@ -1385,4 +1513,30 @@ test('the report screen submits atomically and blocks overlapping submissions', 
   assert.match(upload.storagePath, /^reportes\/AGUA\/categoria-1\/\d{4}\/\d{2}\/00000000-0000-4000-8000-000000000001\/ciudadano-owner\/evidencia-inicial\.jpg$/);
   assert.equal(upload.config.contentType, 'image/jpeg');
   assert.equal(upload.config.upsert, false);
+});
+
+test('Turnstile protects every public authentication entry without exposing its secret', () => {
+  const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+  const session = read('src/context/SessionContext.tsx');
+  const login = read('app/login.tsx');
+  const report = read('app/report/new.tsx');
+  const register = read('app/register.tsx');
+  const recovery = read('app/forgot-password.tsx');
+  const webChallenge = read('src/components/TurnstileChallenge.web.tsx');
+  const nativeChallenge = read('src/components/TurnstileChallenge.tsx');
+  const publicEnvironment = read('.env.example');
+
+  assert.match(session, /signInWithPassword[\s\S]*captchaToken/);
+  assert.match(session, /signInAnonymously\(\{ options \}\)/);
+  assert.match(session, /signUp\([\s\S]*captchaToken/);
+  assert.match(session, /resetPasswordForEmail[\s\S]*captchaToken/);
+  assert.match(login, /action="zacapp_login"/);
+  assert.match(report, /action="zacapp_reporte_anonimo"/);
+  assert.match(report, /signInAsGuest\(captchaToken/);
+  assert.match(register, /action="zacapp_registro"/);
+  assert.match(recovery, /action="zacapp_recuperacion"/);
+  assert.match(webChallenge, /https:\/\/challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit/);
+  assert.match(nativeChallenge, /ReactNativeWebView\.postMessage/);
+  assert.match(publicEnvironment, /EXPO_PUBLIC_TURNSTILE_SITE_KEY=/);
+  assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
 });

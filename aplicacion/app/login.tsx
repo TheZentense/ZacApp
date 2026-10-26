@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import { Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
+import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -13,15 +14,21 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const passwordInputRef = useRef<TextInput>(null);
-  const { signIn, isAuthenticated, isLoading } = useSession();
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const passwordInputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const { signIn, isAuthenticated, isGuest, isLoading } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
+  const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+  const captchaRequired = Boolean(captchaSiteKey);
+
+  const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace('/(tabs)');
-  }, [isAuthenticated, isLoading]);
+    if (!isLoading && isAuthenticated) router.replace(isGuest ? '/report/new' : '/(tabs)');
+  }, [isAuthenticated, isGuest, isLoading]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -43,11 +50,15 @@ export default function LoginScreen() {
       setErrorMessage('Ingresa tu correo electrónico y contraseña.');
       return;
     }
+    if (captchaRequired && !captchaToken) {
+      setErrorMessage('Completa la verificación de seguridad para continuar.');
+      return;
+    }
 
     setErrorMessage('');
     setIsSubmitting(true);
     try {
-      await signIn(email, password);
+      await signIn(email, password, captchaToken || undefined);
       router.replace('/(tabs)');
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -58,7 +69,14 @@ export default function LoginScreen() {
       else setErrorMessage('No fue posible iniciar sesión. Inténtalo nuevamente.');
     } finally {
       setIsSubmitting(false);
+      if (captchaRequired) resetCaptcha();
     }
+  };
+
+  const continueAsGuest = () => {
+    if (isSubmitting) return;
+    setErrorMessage('');
+    router.push('/report/new');
   };
 
   return (
@@ -85,8 +103,23 @@ export default function LoginScreen() {
           </View> : null}
 
           <View style={[styles.card, isNativeMobile && styles.cardMobile]}>
-            <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Bienvenido</Text>
-            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Ingresa con tu correo y contraseña para acceder a ZacApp.</Text>
+            <View style={styles.quickReportPanel}>
+              <View style={styles.quickReportHeading}>
+                <View style={styles.quickReportIcon}><Ionicons name="megaphone" size={22} color={colors.white} /></View>
+                <View style={styles.quickReportText}>
+                  <Text style={styles.quickReportKicker}>Sin crear una cuenta</Text>
+                  <Text style={styles.quickReportTitle}>¿Viste un problema?</Text>
+                </View>
+              </View>
+              <Text style={styles.quickReportCopy}>Envía una fotografía, la ubicación y una breve descripción. Te tomará solo unos minutos.</Text>
+
+              <AppButton label="Hacer un reporte" icon="camera-outline" disabled={isSubmitting} onPress={continueAsGuest} style={styles.quickReportButton} />
+              <Text style={styles.guestNote}>Podrás enviar hasta cinco reportes al día. La fotografía y la ubicación son necesarias.</Text>
+            </View>
+
+            <View style={styles.loginDivider}><View style={styles.guestLine} /><Text style={styles.loginDividerText}>¿Ya tienes una cuenta?</Text><View style={styles.guestLine} /></View>
+            <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Iniciar sesión</Text>
+            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Consulta tus reportes y revisa su avance.</Text>
 
             <Text style={styles.label}>Correo electrónico</Text>
             <TextInput
@@ -111,9 +144,12 @@ export default function LoginScreen() {
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
 
+            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
+              disabled={isSubmitting || (captchaRequired && !captchaToken)}
               onPress={submit}
             />
             <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>
@@ -156,6 +192,14 @@ const styles = StyleSheet.create({
   cardTitleMobile: { fontSize: 24 },
   cardCopy: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: spacing.md },
   cardCopyMobile: { fontSize: 14, lineHeight: 20, marginBottom: spacing.sm },
+  quickReportPanel: { backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.accent, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
+  quickReportHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  quickReportIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  quickReportText: { flex: 1, minWidth: 0 },
+  quickReportKicker: { color: colors.secondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+  quickReportTitle: { color: colors.primary, fontSize: 22, lineHeight: 27, fontWeight: '800', marginTop: 2 },
+  quickReportCopy: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  quickReportButton: { minHeight: 56 },
   label: { color: colors.text, fontWeight: '600', marginTop: spacing.xs },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontSize: 16, backgroundColor: colors.surface },
   passwordField: { minHeight: 52, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center' },
@@ -167,5 +211,9 @@ const styles = StyleSheet.create({
   errorBox: { backgroundColor: colors.dangerSoft, borderWidth: 1, borderColor: '#F2B8B5', borderRadius: radius.md, padding: spacing.md, marginVertical: spacing.xs },
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   forgotButton: { alignSelf: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' }
+  forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' },
+  loginDivider: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.xs },
+  guestLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  loginDividerText: { color: colors.secondary, fontSize: 12, fontWeight: '800' },
+  guestNote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center' }
 });

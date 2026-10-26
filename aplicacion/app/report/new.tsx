@@ -11,6 +11,7 @@ import { isSupabaseConfigured } from '@/lib/supabase';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { optimizeEvidence, selectEvidenceImages } from '@/services/evidenceImages';
+import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 const previewCategories: ReportCategory[] = [
   { id: 1, name: 'Alumbrado público' },
@@ -31,7 +32,7 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
 }
 
 export default function NewReportScreen() {
-  const { role, email, fullName, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
+  const { role, email, fullName, isAuthenticated, isGuest, isLoading, isPasswordRecovery, signInAsGuest } = useSession();
   const mountedRef = useRef(true);
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
   const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
@@ -52,6 +53,13 @@ export default function NewReportScreen() {
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
   const createdIncidentRef = useRef<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
+  const captchaRequired = Boolean(captchaSiteKey);
+  const isAnonymousReport = isGuest || !isAuthenticated;
+  const maxEvidence = isAnonymousReport ? 3 : 5;
+  const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   const captureLocation = async () => {
     if (isLocating || requestInFlight.current) return;
@@ -142,7 +150,7 @@ export default function NewReportScreen() {
       const picture = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (!picture?.uri) throw new Error('La cámara no devolvió una fotografía.');
       const optimized = await optimizeEvidence(picture.uri);
-      if (mountedRef.current) { setEvidence((current) => current.length < 5 ? [...current, optimized] : current); setCameraOpen(false); }
+      if (mountedRef.current) { setEvidence((current) => current.length < maxEvidence ? [...current, optimized] : current); setCameraOpen(false); }
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible tomar la fotografía', 'Intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
@@ -153,8 +161,8 @@ export default function NewReportScreen() {
     imageInFlight.current = true;
     setIsCapturing(true);
     try {
-      const selectedImages = await selectEvidenceImages(5 - evidence.length);
-      if (mountedRef.current && selectedImages.length) setEvidence((current) => [...current, ...selectedImages].slice(0, 5));
+      const selectedImages = await selectEvidenceImages(maxEvidence - evidence.length);
+      if (mountedRef.current && selectedImages.length) setEvidence((current) => [...current, ...selectedImages].slice(0, maxEvidence));
     } catch {
       if (mountedRef.current) Alert.alert('No fue posible preparar la fotografía', 'Selecciona otra imagen e intenta nuevamente.');
     } finally { imageInFlight.current = false; if (mountedRef.current) setIsCapturing(false); }
@@ -163,13 +171,15 @@ export default function NewReportScreen() {
   const submit = async () => {
     if (requestInFlight.current || imageInFlight.current || createdIncidentRef.current) return;
     const selectedCategory = categories.find((item) => item.name === category);
-    if (!fullName.trim() || !email.trim()) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
+    if (isAuthenticated && !isGuest && (!fullName.trim() || !email.trim())) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
     if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
     if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
     if (!evidence.length) return Alert.alert('Fotografía requerida', 'Toma o selecciona al menos una fotografía del incidente antes de enviar.');
+    if (!isAuthenticated && captchaRequired && !captchaToken) return Alert.alert('Verificación requerida', 'Confirma que eres una persona antes de enviar el reporte.');
     requestInFlight.current = true;
     setIsSubmitting(true);
     try {
+      if (!isAuthenticated) await signInAsGuest(captchaToken || undefined);
       const incident = await createReport({
         categoryId: selectedCategory.id,
         description,
@@ -183,13 +193,18 @@ export default function NewReportScreen() {
       if (mountedRef.current) setCreatedIncident(incident);
     } catch (error) {
       if (mountedRef.current) Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Revisa los datos y la conexión antes de intentar nuevamente.');
-    } finally { requestInFlight.current = false; if (mountedRef.current) setIsSubmitting(false); }
+    } finally {
+      requestInFlight.current = false;
+      if (mountedRef.current) {
+        setIsSubmitting(false);
+        if (!createdIncidentRef.current && captchaRequired) resetCaptcha();
+      }
+    }
   };
 
   if (isLoading) return <LoadingState label="Verificando sesión..." />;
   if (isPasswordRecovery) return <Redirect href="/reset-password" />;
-  if (isSupabaseConfigured && !isAuthenticated) return <Redirect href="/login" />;
-  if (role !== 'citizen') return <Redirect href="/(tabs)" />;
+  if (isAuthenticated && role !== 'citizen') return <Redirect href="/(tabs)" />;
 
   if (createdIncident) return (
     <ScrollView style={styles.scroll} contentContainerStyle={[styles.page, styles.confirmationPage]}>
@@ -197,7 +212,7 @@ export default function NewReportScreen() {
         <View style={styles.successSeal}><Ionicons name="checkmark" size={38} color={colors.white} /></View>
         <Text style={styles.confirmationEyebrow}>REPORTE REGISTRADO</Text>
         <Text style={styles.confirmationTitle}>Recibimos tu reporte</Text>
-        <Text style={styles.confirmationCopy}>El caso quedó asociado a tu cuenta y ya puede consultarse en ZacApp.</Text>
+        <Text style={styles.confirmationCopy}>{isAnonymousReport ? 'El caso quedó asociado a esta sesión anónima. Conserva el código; puedes crear una cuenta para mantener el seguimiento aunque cambies de dispositivo.' : 'El caso quedó asociado a tu cuenta y ya puede consultarse en ZacApp.'}</Text>
 
         <View style={styles.codeCard}>
           <Text style={styles.codeLabel}>Código de seguimiento</Text>
@@ -214,6 +229,7 @@ export default function NewReportScreen() {
         </View>
 
         <View style={styles.confirmationActions}>
+          {isAnonymousReport && <AppButton label="Crear cuenta y conservar seguimiento" icon="person-add-outline" onPress={() => router.push('/register')} />}
           <AppButton label="Ver mis reportes" icon="documents-outline" onPress={() => router.replace('/reports')} />
           <AppButton label="Consultar seguimiento" variant="secondary" icon="trail-sign-outline" onPress={() => router.replace('/tracking')} />
           <AppButton label="Volver al inicio" variant="ghost" icon="home-outline" onPress={() => router.replace('/')} />
@@ -236,12 +252,15 @@ export default function NewReportScreen() {
       </View>
 
       <View style={styles.form}>
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View><Text style={styles.sectionTitle}>Datos del ciudadano</Text><Text style={styles.sectionCopy}>Se obtienen de la cuenta con la sesión iniciada.</Text></View></View>
-        <View style={styles.identityCard}>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>01</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{isAnonymousReport ? 'Reporte anónimo' : 'Datos del ciudadano'}</Text><Text style={styles.sectionCopy}>{isAnonymousReport ? 'No necesitas proporcionar nombre ni correo electrónico.' : 'Se obtienen de la cuenta con la sesión iniciada.'}</Text></View></View>
+        {isAnonymousReport ? <View style={styles.guestIdentityForm}>
+          <View style={styles.anonymousIdentity}><View style={styles.identityIcon}><Ionicons name="person-outline" size={22} color={colors.white} /></View><View style={styles.identityText}><Text style={styles.identityName}>Continuar sin cuenta</Text><Text style={styles.identityEmail}>El reporte no solicitará datos de contacto.</Text></View><Ionicons name="shield-checkmark-outline" size={22} color={colors.secondary} /></View>
+          <View style={styles.guestLimitNote}><Ionicons name="time-outline" size={18} color={colors.secondary} /><Text style={styles.guestLimitText}>Puedes enviar hasta cinco reportes cada 24 horas, con al menos 15 minutos entre cada uno.</Text></View>
+        </View> : <View style={styles.identityCard}>
           <View style={styles.identityIcon}><Ionicons name="person-outline" size={22} color={colors.white} /></View>
           <View style={styles.identityText}><Text style={styles.identityName}>{fullName || 'Nombre pendiente'}</Text><Text style={styles.identityEmail}>{email || 'Correo pendiente'}</Text></View>
           <Ionicons name={fullName && email ? 'checkmark-circle' : 'alert-circle'} size={22} color={fullName && email ? colors.secondary : colors.danger} />
-        </View>
+        </View>}
 
         <View style={styles.divider} />
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>02</Text></View><View><Text style={styles.sectionTitle}>Tipo de incidencia</Text><Text style={styles.sectionCopy}>Selecciona la categoría que mejor corresponda.</Text></View></View>
@@ -277,7 +296,7 @@ export default function NewReportScreen() {
         </Pressable>
 
         <View style={styles.divider} />
-        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a 5 fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/5</Text></View></View>
+        <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a {maxEvidence} fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/{maxEvidence}</Text></View></View>
         {evidence.length > 0 && (
           <View style={styles.evidenceGrid}>
             {evidence.map((item, index) => (
@@ -288,17 +307,21 @@ export default function NewReportScreen() {
             ))}
           </View>
         )}
-        {evidence.length < 5 && <View style={styles.evidenceOptions}>
+        {evidence.length < maxEvidence && <View style={styles.evidenceOptions}>
           <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={openCamera}>
             <View style={styles.cameraIcon}><Ionicons name="camera-outline" size={24} color={colors.white} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>{evidence.length ? 'Agregar otra fotografía' : 'Tomar fotografía'}</Text><Text style={styles.cameraButtonCopy}>Usa la cámara; se conservarán las proporciones.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
           </Pressable>
           <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.pressed]} disabled={isSubmitting || isCapturing} onPress={selectEvidence}>
-            <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Puedes seleccionar hasta {5 - evidence.length} {5 - evidence.length === 1 ? 'imagen' : 'imágenes'}.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
+            <View style={styles.galleryIcon}><Ionicons name="images-outline" size={24} color={colors.primary} /></View><View style={styles.cameraButtonText}><Text style={styles.cameraButtonTitle}>Elegir de galería</Text><Text style={styles.cameraButtonCopy}>Puedes seleccionar hasta {maxEvidence - evidence.length} {maxEvidence - evidence.length === 1 ? 'imagen' : 'imágenes'}.</Text></View><Ionicons name="arrow-forward" size={18} color={colors.primary} />
           </Pressable>
         </View>}
         {evidence.length > 0 && <Text style={styles.evidenceCopy}>Las imágenes se optimizan sin estirar ni recortar y se vinculan juntas al enviar el reporte.</Text>}
 
-        <View style={styles.formFooter}><View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>Nombre, correo, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.</Text></View><AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || !fullName || !email} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} /></View>
+        <View style={styles.formFooter}>
+          <View style={styles.privacyNote}><Ionicons name="shield-checkmark-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>{isAnonymousReport ? 'Las fotografías y la ubicación GPS quedarán vinculadas de forma segura al reporte, sin solicitar correo.' : 'Tus datos, fotografías y ubicación GPS quedarán vinculados de forma segura al reporte.'}</Text></View>
+          {!isAuthenticated && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_reporte_anonimo" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); Alert.alert('Verificación no disponible', 'No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+          <AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || (isAuthenticated && !isGuest && (!fullName || !email)) || (!isAuthenticated && captchaRequired && !captchaToken)} label={isSubmitting ? `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : 'Enviar reporte'} icon="send-outline" onPress={submit} />
+        </View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
 
@@ -359,6 +382,10 @@ const styles = StyleSheet.create({
   sectionCopy: { color: colors.muted, fontSize: 12, marginTop: 2 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
   identityCard: { minHeight: 72, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  guestIdentityForm: { borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm },
+  anonymousIdentity: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  guestLimitNote: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, backgroundColor: colors.softGreen, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs },
+  guestLimitText: { flex: 1, color: colors.primary, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   identityIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   identityText: { flex: 1 },
   identityName: { color: colors.text, fontSize: 15, fontWeight: '800' },

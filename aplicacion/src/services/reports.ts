@@ -95,7 +95,7 @@ function evidenceStoragePath(input: {
   categoryId: number;
   incidentId: string;
   userId: string;
-  actor: 'ciudadano' | 'personal';
+  actor: 'ciudadano' | 'invitado' | 'personal';
   filename: string;
 }) {
   const { year, month } = guatemalaYearMonth();
@@ -120,7 +120,10 @@ export async function createReport({ categoryId, description, location, latitude
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error('Inicia sesión para registrar un reporte.');
-  if (evidence.length < 1 || evidence.length > 5 || evidence.some((item) => item.mimeType !== 'image/jpeg')) {
+  const isGuest = authData.user.is_anonymous === true;
+  const evidenceLimit = isGuest ? 3 : 5;
+  if (evidence.length < 1 || evidence.length > evidenceLimit || evidence.some((item) => item.mimeType !== 'image/jpeg')) {
+    if (isGuest) throw new Error('Como invitado puedes adjuntar entre una y tres fotografías JPEG.');
     throw new Error('Adjunta entre una y cinco fotografías JPEG.');
   }
 
@@ -134,7 +137,7 @@ export async function createReport({ categoryId, description, location, latitude
         categoryId,
         incidentId,
         userId: authData.user.id,
-        actor: 'ciudadano',
+        actor: isGuest ? 'invitado' : 'ciudadano',
         filename: index === 0 ? 'evidencia-inicial.jpg' : `evidencia-adicional-${String(index + 1).padStart(2, '0')}.jpg`
       });
       const fileData = await readEvidenceBytes(item.uri);
@@ -161,11 +164,16 @@ export async function createReport({ categoryId, description, location, latitude
     p_latitude: latitude,
     p_longitude: longitude,
     p_storage_paths: uploadedPaths,
-    p_mime_type: 'image/jpeg'
+    p_mime_type: 'image/jpeg',
+    p_reporter_name: null,
+    p_reporter_email: null
   });
 
   if (error || !data?.[0]) {
     await supabase.storage.from('incidente-evidencia').remove(uploadedPaths);
+    const message = error?.message.toLowerCase() ?? '';
+    if (message.includes('cooldown')) throw new Error('Espera 15 minutos antes de enviar otro reporte como invitado.');
+    if (message.includes('daily report limit')) throw new Error('Alcanzaste el límite de cinco reportes en las últimas 24 horas.');
     throw new Error(error?.message ?? 'No fue posible registrar el reporte con su evidencia.');
   }
 
@@ -195,7 +203,9 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
     categoryId: incident.category_id,
     incidentId,
     userId: authData.user.id,
-    actor: incident.citizen_id === authData.user.id ? 'ciudadano' : 'personal',
+    actor: incident.citizen_id === authData.user.id
+      ? authData.user.is_anonymous === true ? 'invitado' : 'ciudadano'
+      : 'personal',
     filename: `evidencia-${Date.now()}-${Crypto.randomUUID()}.jpg`
   });
 
@@ -455,7 +465,7 @@ function isEvidenceStoragePath(value: unknown, incidentId: string, uploadedBy: u
     && /^(0[1-9]|1[0-2])$/.test(parts[4])
     && uuid.test(parts[5]) && parts[5] === incidentId
     && uuid.test(uploadedBy)
-    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
+    && (parts[6] === `ciudadano-${uploadedBy}` || parts[6] === `invitado-${uploadedBy}` || parts[6] === `personal-${uploadedBy}`)
     && /^[A-Za-z0-9._-]+\.jpg$/.test(parts[7]);
 }
 
