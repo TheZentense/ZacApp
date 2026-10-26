@@ -11,7 +11,6 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isStartingGuest, setIsStartingGuest] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -19,7 +18,7 @@ export default function LoginScreen() {
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const passwordInputRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const { signIn, signInAsGuest, isAuthenticated, isGuest, isLoading } = useSession();
+  const { signIn, isAuthenticated, isGuest, isLoading } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
@@ -74,27 +73,10 @@ export default function LoginScreen() {
     }
   };
 
-  const continueAsGuest = async () => {
-    if (isStartingGuest || isSubmitting) return;
-    if (captchaRequired && !captchaToken) {
-      setErrorMessage('Completa la verificación de seguridad para continuar.');
-      return;
-    }
+  const continueAsGuest = () => {
+    if (isSubmitting) return;
     setErrorMessage('');
-    setIsStartingGuest(true);
-    try {
-      await signInAsGuest(captchaToken || undefined);
-      router.replace('/report/new');
-    } catch (error) {
-      const message = error instanceof Error ? error.message.toLowerCase() : '';
-      if (message.includes('captcha')) setErrorMessage('Completa la verificación de seguridad para continuar.');
-      else if (message.includes('anonymous') || message.includes('guest access')) setErrorMessage('El acceso para reportar sin cuenta todavía no está habilitado en el servidor.');
-      else if (message.includes('failed to fetch') || message.includes('network')) setErrorMessage('No fue posible conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.');
-      else setErrorMessage('No fue posible iniciar el reporte rápido. Inténtalo nuevamente.');
-    } finally {
-      setIsStartingGuest(false);
-      if (captchaRequired) resetCaptcha();
-    }
+    router.push('/report/new');
   };
 
   return (
@@ -131,9 +113,7 @@ export default function LoginScreen() {
               </View>
               <Text style={styles.quickReportCopy}>Envía una fotografía, la ubicación y una breve descripción. Te tomará solo unos minutos.</Text>
 
-              {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
-
-              <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Hacer un reporte'} icon="camera-outline" disabled={isStartingGuest || isSubmitting || (captchaRequired && !captchaToken)} onPress={continueAsGuest} style={styles.quickReportButton} />
+              <AppButton label="Hacer un reporte" icon="camera-outline" disabled={isSubmitting} onPress={continueAsGuest} style={styles.quickReportButton} />
               <Text style={styles.guestNote}>Podrás enviar hasta cinco reportes al día. La fotografía y la ubicación son necesarias.</Text>
             </View>
 
@@ -150,7 +130,7 @@ export default function LoginScreen() {
               keyboardType="email-address"
               placeholder="correo@zacapp.gt"
               placeholderTextColor={colors.muted}
-              editable={!isSubmitting && !isStartingGuest}
+              editable={!isSubmitting}
               onSubmitEditing={() => passwordInputRef.current?.focus()}
               onFocus={revealForm}
               returnKeyType="next"
@@ -158,16 +138,18 @@ export default function LoginScreen() {
 
             <Text style={styles.label}>Contraseña</Text>
             <View style={styles.passwordField}>
-              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting && !isStartingGuest} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
 
+            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
-              disabled={isSubmitting || isStartingGuest || (captchaRequired && !captchaToken)}
+              disabled={isSubmitting || (captchaRequired && !captchaToken)}
               onPress={submit}
             />
             <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>

@@ -12,8 +12,6 @@ type CreateReportInput = {
   latitude: number;
   longitude: number;
   evidence: ReportEvidenceInput[];
-  reporterName?: string;
-  reporterEmail?: string;
 };
 
 export type ReportEvidenceInput = {
@@ -117,7 +115,7 @@ export async function listReportCategories(): Promise<ReportCategory[]> {
   return data ?? [];
 }
 
-export async function createReport({ categoryId, description, location, latitude, longitude, evidence, reporterName, reporterEmail }: CreateReportInput) {
+export async function createReport({ categoryId, description, location, latitude, longitude, evidence }: CreateReportInput) {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -167,8 +165,8 @@ export async function createReport({ categoryId, description, location, latitude
     p_longitude: longitude,
     p_storage_paths: uploadedPaths,
     p_mime_type: 'image/jpeg',
-    p_reporter_name: isGuest ? reporterName?.trim() || null : null,
-    p_reporter_email: isGuest ? reporterEmail?.trim().toLowerCase() || null : null
+    p_reporter_name: null,
+    p_reporter_email: null
   });
 
   if (error || !data?.[0]) {
@@ -176,8 +174,6 @@ export async function createReport({ categoryId, description, location, latitude
     const message = error?.message.toLowerCase() ?? '';
     if (message.includes('cooldown')) throw new Error('Espera 15 minutos antes de enviar otro reporte como invitado.');
     if (message.includes('daily report limit')) throw new Error('Alcanzaste el límite de cinco reportes en las últimas 24 horas.');
-    if (message.includes('guest name')) throw new Error('Ingresa tu nombre para enviar el reporte.');
-    if (message.includes('guest email')) throw new Error('Ingresa un correo electrónico válido.');
     throw new Error(error?.message ?? 'No fue posible registrar el reporte con su evidencia.');
   }
 

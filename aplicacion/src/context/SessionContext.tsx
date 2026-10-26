@@ -22,6 +22,7 @@ type SessionContextValue = {
   isLoading: boolean;
   signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signInAsGuest: (captchaToken?: string) => Promise<void>;
+  linkGuestEmail: (name: string, email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string, captchaToken?: string) => Promise<boolean>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string, redirectTo: string, captchaToken?: string) => Promise<void>;
@@ -181,6 +182,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           await supabase.auth.signOut({ scope: 'local' });
           throw new Error('guest access unavailable');
         }
+      },
+      linkGuestEmail: async (name: string, value: string, password: string) => {
+        if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError || !sessionData.session?.user?.is_anonymous) throw new Error('anonymous session required');
+        const { data, error } = await supabase.auth.updateUser({
+          email: value.trim().toLowerCase(),
+          password,
+          data: { full_name: name.trim() }
+        });
+        if (error) throw error;
+        await hydrateIdentity(data.user);
       },
       signUp: async (name: string, value: string, password: string, captchaToken?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
