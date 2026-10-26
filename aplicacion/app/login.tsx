@@ -121,8 +121,25 @@ export default function LoginScreen() {
           </View> : null}
 
           <View style={[styles.card, isNativeMobile && styles.cardMobile]}>
-            <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Bienvenido</Text>
-            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Ingresa con tu correo y contraseña para acceder a ZacApp.</Text>
+            <View style={styles.quickReportPanel}>
+              <View style={styles.quickReportHeading}>
+                <View style={styles.quickReportIcon}><Ionicons name="megaphone" size={22} color={colors.white} /></View>
+                <View style={styles.quickReportText}>
+                  <Text style={styles.quickReportKicker}>Sin crear una cuenta</Text>
+                  <Text style={styles.quickReportTitle}>¿Viste un problema?</Text>
+                </View>
+              </View>
+              <Text style={styles.quickReportCopy}>Envía una fotografía, la ubicación y una breve descripción. Te tomará solo unos minutos.</Text>
+
+              {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+
+              <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Hacer un reporte'} icon="camera-outline" disabled={isStartingGuest || isSubmitting || (captchaRequired && !captchaToken)} onPress={continueAsGuest} style={styles.quickReportButton} />
+              <Text style={styles.guestNote}>Podrás enviar hasta cinco reportes al día. La fotografía y la ubicación son necesarias.</Text>
+            </View>
+
+            <View style={styles.loginDivider}><View style={styles.guestLine} /><Text style={styles.loginDividerText}>¿Ya tienes una cuenta?</Text><View style={styles.guestLine} /></View>
+            <Text style={[styles.cardTitle, isNativeMobile && styles.cardTitleMobile]}>Iniciar sesión</Text>
+            <Text style={[styles.cardCopy, isNativeMobile && styles.cardCopyMobile]}>Consulta tus reportes y revisa su avance.</Text>
 
             <Text style={styles.label}>Correo electrónico</Text>
             <TextInput
@@ -147,8 +164,6 @@ export default function LoginScreen() {
 
             {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
 
-            {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
-
             <AppButton
               label={isSubmitting ? 'Ingresando...' : 'Iniciar sesión'}
               icon="log-in-outline"
@@ -157,9 +172,6 @@ export default function LoginScreen() {
             />
             <Pressable style={styles.forgotButton} onPress={() => router.push('/forgot-password')}><Text style={styles.forgotText}>¿Olvidaste tu contraseña?</Text></Pressable>
             <AppButton label="Crear cuenta ciudadana" variant="ghost" icon="person-add-outline" onPress={() => router.push('/register')} />
-            <View style={styles.guestDivider}><View style={styles.guestLine} /><Text style={styles.guestDividerText}>O reporta rápidamente</Text><View style={styles.guestLine} /></View>
-            <AppButton label={isStartingGuest ? 'Preparando reporte...' : 'Reportar sin crear cuenta'} variant="secondary" icon="megaphone-outline" disabled={isStartingGuest || isSubmitting || (captchaRequired && !captchaToken)} onPress={continueAsGuest} />
-            <Text style={styles.guestNote}>Acceso limitado a cinco reportes diarios. La fotografía y la ubicación GPS son obligatorias.</Text>
             <View style={styles.secureNote}><Ionicons name="shield-checkmark-outline" size={17} color={colors.secondary} /><Text style={styles.secureNoteText}>Acceso protegido mediante Supabase Auth.</Text></View>
             <Text style={styles.helpText}>¿Necesitas ayuda? Contacta al administrador del sistema.</Text>
           </View>
@@ -198,6 +210,14 @@ const styles = StyleSheet.create({
   cardTitleMobile: { fontSize: 24 },
   cardCopy: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: spacing.md },
   cardCopyMobile: { fontSize: 14, lineHeight: 20, marginBottom: spacing.sm },
+  quickReportPanel: { backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.accent, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
+  quickReportHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  quickReportIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  quickReportText: { flex: 1, minWidth: 0 },
+  quickReportKicker: { color: colors.secondary, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+  quickReportTitle: { color: colors.primary, fontSize: 22, lineHeight: 27, fontWeight: '800', marginTop: 2 },
+  quickReportCopy: { color: colors.text, fontSize: 14, lineHeight: 20 },
+  quickReportButton: { minHeight: 56 },
   label: { color: colors.text, fontWeight: '600', marginTop: spacing.xs },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontSize: 16, backgroundColor: colors.surface },
   passwordField: { minHeight: 52, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center' },
@@ -210,8 +230,8 @@ const styles = StyleSheet.create({
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   forgotButton: { alignSelf: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
   forgotText: { color: colors.secondary, fontSize: 13, fontWeight: '800' },
-  guestDivider: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginVertical: spacing.xs },
+  loginDivider: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md, marginBottom: spacing.xs },
   guestLine: { flex: 1, height: 1, backgroundColor: colors.border },
-  guestDividerText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  loginDividerText: { color: colors.secondary, fontSize: 12, fontWeight: '800' },
   guestNote: { color: colors.muted, fontSize: 11, lineHeight: 16, textAlign: 'center' }
 });
