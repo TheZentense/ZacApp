@@ -1411,6 +1411,13 @@ test('anonymous report migration keeps GPS and abuse controls while allowing nul
   assert.doesNotMatch(sql, /Valid guest email required|Guest name required/);
 });
 
+test('public report categories expose only the active catalog fields before anonymous sign-in', () => {
+  const migration = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261026052000_allow_public_active_report_categories.sql'), 'utf8');
+  assert.match(migration, /grant select \(id, name, active\) on public\.categories to anon/i);
+  assert.match(migration, /for select\s+to anon\s+using \(active = true\)/i);
+  assert.doesNotMatch(migration, /grant select[^;]*on public\.(incidents|profiles|departments|incident_evidence)/i);
+});
+
 test('registered clients retain the previous atomic creation RPC while the guest-aware signature is deployed', () => {
   const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261024164105_restore_registered_report_rpc_compatibility.sql'), 'utf8');
   assert.match(sql, /create or replace function public\.create_incident_with_evidence\([\s\S]*p_mime_type text\s*\)/);
