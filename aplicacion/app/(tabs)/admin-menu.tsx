@@ -29,12 +29,25 @@ const employeeFunctions = [
   { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
 ] as const;
 
+const departmentFunctions = [
+  { title: 'Reportes del departamento', copy: 'Consultar únicamente los casos de tu área', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Seguimiento del departamento', copy: 'Revisar avances, fotografías e historial autorizados', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Mi perfil', copy: 'Cuenta y departamento asignado', icon: 'person-outline', route: '/profile' }
+] as const;
+
+const supervisorFunctions = [
+  { title: 'Reportes generales', copy: 'Consultar todos los departamentos', icon: 'document-text-outline', route: '/reports' },
+  { title: 'Seguimiento general', copy: 'Revisar avances e historial autorizados', icon: 'trail-sign-outline', route: '/tracking' },
+  { title: 'Panel operativo', copy: 'Consultar indicadores municipales', icon: 'bar-chart-outline', route: '/' },
+  { title: 'Mi perfil', copy: 'Consultar tu cuenta', icon: 'person-outline', route: '/profile' }
+] as const;
+
 export default function AdminMenuScreen() {
   const { width } = useWindowDimensions();
   const { role, databaseRole } = useSession();
   const visual = roleVisuals[role];
-  const visibleFunctions = databaseRole === 'administrador' ? functions : databaseRole === 'mantenimiento' ? maintenanceFunctions : employeeFunctions;
-  const title = databaseRole === 'administrador' ? 'Funciones administrativas' : databaseRole === 'mantenimiento' ? 'Herramientas de campo' : 'Funciones del departamento';
+  const visibleFunctions = databaseRole === 'administrador' ? functions : databaseRole === 'supervisor' ? supervisorFunctions : databaseRole === 'mantenimiento' ? maintenanceFunctions : databaseRole === 'coordinador' || databaseRole === 'comunicacion' ? departmentFunctions : employeeFunctions;
+  const title = databaseRole === 'administrador' ? 'Funciones administrativas' : databaseRole === 'supervisor' ? 'Supervisión municipal' : databaseRole === 'mantenimiento' ? 'Herramientas de campo' : 'Funciones del departamento';
   const isWide = width >= 780;
 
   if (databaseRole === 'ciudadano' || !databaseRole) return <Redirect href="/services" />;

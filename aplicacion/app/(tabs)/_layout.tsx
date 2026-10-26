@@ -44,14 +44,23 @@ const employeeNavigation = [
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
 
+const departmentNavigation = [
+  { name: 'index', title: 'Panel departamental', icon: 'grid-outline' },
+  { name: 'reports', title: 'Reportes del departamento', icon: 'document-text-outline' },
+  { name: 'tracking', title: 'Seguimiento del departamento', icon: 'git-branch-outline' },
+  { name: 'admin-menu', title: 'Funciones', icon: 'apps-outline' },
+  { name: 'profile', title: 'Perfil', icon: 'person-outline' }
+] satisfies { name: string; title: string; icon: IconName }[];
+
 function WebSidebar({ state, emitter, navigateToTab, role }: BottomTabBarProps & { role: UserRole }) {
   const [expanded, setExpanded] = useState(true);
-  const { signOut, department } = useSession();
+  const { signOut, department, databaseRole } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
   const isStaff = role !== 'citizen';
-  const items = isAdmin ? adminNavigation : isMaintenance ? maintenanceNavigation : isEmployee ? employeeNavigation : citizenNavigation;
+  const departmentViewer = databaseRole === 'coordinador' || databaseRole === 'comunicacion';
+  const items = isAdmin ? adminNavigation : isMaintenance ? maintenanceNavigation : departmentViewer ? departmentNavigation : isEmployee ? employeeNavigation : citizenNavigation;
   const visual = roleVisuals[role];
   const accent = visual.accent;
   const activeRoute = state.routes[state.index]?.name;
@@ -121,13 +130,14 @@ function WebSidebar({ state, emitter, navigateToTab, role }: BottomTabBarProps &
 }
 
 export default function TabsLayout() {
-  const { role, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
+  const { role, databaseRole, isAuthenticated, isLoading, isPasswordRecovery } = useSession();
   const isAdmin = role === 'admin' || role === 'superadmin';
   const isMaintenance = role === 'maintenance';
   const isEmployee = role === 'employee';
   const isStaff = role !== 'citizen';
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === 'web' && width >= 900;
+  const departmentViewer = databaseRole === 'coordinador' || databaseRole === 'comunicacion';
   const visual = roleVisuals[role];
   const navigationBackground = isStaff ? visual.primary : colors.white;
   const navigationAccent = isStaff ? visual.accent : colors.primary;
@@ -169,9 +179,9 @@ export default function TabsLayout() {
         tabBarLabelStyle: isWeb ? { fontSize: 14, fontWeight: '700', textAlign: 'left' } : { fontSize: 11, fontWeight: '700' }
       }}
     >
-      <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={String(color)} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={String(color)} size={size} /> }} />
-      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIconStyle: !isWeb ? styles.centerTabIconSlot : undefined, tabBarLabelStyle: !isWeb ? styles.centerTabLabel : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
+      <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance || departmentViewer ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance || departmentViewer ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: departmentViewer ? 'Seguimiento del departamento' : isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance || departmentViewer ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIconStyle: !isWeb ? styles.centerTabIconSlot : undefined, tabBarLabelStyle: !isWeb ? styles.centerTabLabel : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
       <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={String(color)} size={size} /> }} />
       <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={String(color)} size={size} /> }} />
       <Tabs.Screen name="profile" options={{ title: 'Perfil', tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" color={String(color)} size={size} /> }} />

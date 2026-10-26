@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
@@ -11,9 +11,10 @@ import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident, IncidentPriority, IncidentStatus } from '@/types/domain';
 import { useSession } from '@/context/SessionContext';
 import { roleVisuals } from '@/theme/roles';
-import { listDepartments, listDepartmentStaff, listReportEvidence, updateReportManagement, updateReportStatus, uploadReportEvidence, type ReportAssignee, type ReportDepartment, type ReportEvidence, type ReportEvidenceInput, type StaffEvidenceKind } from '@/services/reports';
+import { getReporterContact, listDepartments, listDepartmentStaff, listReportEvidence, updateReportManagement, updateReportStatus, uploadReportEvidence, type ReporterContact, type ReportAssignee, type ReportDepartment, type ReportEvidence, type ReportEvidenceInput, type StaffEvidenceKind } from '@/services/reports';
 import { AppButton } from '@/components/AppButton';
 import { IncidentHeatmap, ReportLocationMap } from '@/components/IncidentLocation';
+import { supabase } from '@/lib/supabase';
 
 type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
 type PriorityFilter = 'TODAS' | IncidentPriority;
@@ -47,7 +48,7 @@ const maintenanceTransitions: Partial<Record<IncidentStatus, IncidentStatus[]>> 
 };
 
 export default function ReportsScreen() {
-  const { role, databaseRole, department } = useSession();
+  const { role, databaseRole, department, userId, isAuthenticated } = useSession();
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
   const [filter, setFilter] = useState<Filter>('TODOS');
@@ -56,6 +57,8 @@ export default function ReportsScreen() {
   const [departmentFilter, setDepartmentFilter] = useState('TODOS');
   const [selectedItem, setSelected] = useState<Incident | null>(null);
   const selected = availableIncidents.find((item) => item.id === selectedItem?.id) ?? null;
+  const [reporterContact, setReporterContact] = useState<{ incidentId: string; userId: string | null; value: ReporterContact | null } | null>(null);
+  const [contactError, setContactError] = useState<{ incidentId: string; userId: string | null; message: string } | null>(null);
   const [nextStatus, setNextStatus] = useState<IncidentStatus | null>(null);
   const [statusNote, setStatusNote] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
@@ -75,7 +78,9 @@ export default function ReportsScreen() {
   const [evidenceError, setEvidenceError] = useState('');
   const [isUploadingEvidence, setIsUploadingEvidence] = useState(false);
   const [existingEvidence, setExistingEvidence] = useState<ReportEvidence[]>([]);
+  const [evidenceOwner, setEvidenceOwner] = useState('');
   const [isLoadingEvidence, setIsLoadingEvidence] = useState(false);
+  const [evidenceRevision, setEvidenceRevision] = useState(0);
   const [staffEvidenceKind, setStaffEvidenceKind] = useState<StaffEvidenceKind>('AVANCE');
   const canManageAssignment = databaseRole === 'administrador';
   const canAssignSelected = canManageAssignment && selected?.status === 'VALIDADO' && !selected.assignedToId && !selected.departmentId;
@@ -89,12 +94,16 @@ export default function ReportsScreen() {
     const matchesDepartment = departmentFilter === 'TODOS' || item.department === departmentFilter;
     return matchesStatus && matchesSearch && matchesPriority && matchesDepartment;
   }), [readableIncidents, departmentFilter, filter, priorityFilter, search]);
-  const heading = databaseRole === 'administrador' ? 'Reportes generales' : databaseRole === 'mantenimiento' ? `Asignaciones · ${department}` : databaseRole === 'operador' ? `Tareas asignadas · ${department}` : 'Mis reportes';
-  const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : department ? `Consulta únicamente los casos de ${department}.` : 'Consulta reportes de todos los departamentos.';
+  const heading = databaseRole === 'administrador' || databaseRole === 'supervisor' ? 'Reportes generales' : databaseRole === 'mantenimiento' ? `Asignaciones · ${department}` : databaseRole === 'operador' ? `Tareas asignadas · ${department}` : databaseRole === 'coordinador' || databaseRole === 'comunicacion' ? `Reportes · ${department}` : 'Mis reportes';
+  const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : databaseRole === 'administrador' || databaseRole === 'supervisor' ? 'Consulta reportes de todos los departamentos.' : `Consulta únicamente los casos de ${department}.`;
   const availableTransitions = selected
     ? (databaseRole === 'mantenimiento' || databaseRole === 'operador' ? maintenanceTransitions[selected.status] : databaseRole === 'administrador' ? administrativeTransitions[selected.status] : []) ?? []
     : [];
   const selectedIncidentId = selected?.id;
+  const evidenceIdentityKey = JSON.stringify([userId, databaseRole, selectedIncidentId]);
+  const visibleEvidence = evidenceOwner === evidenceIdentityKey ? existingEvidence : [];
+  const visibleContact = reporterContact && reporterContact.incidentId === selectedIncidentId && reporterContact.userId === userId ? reporterContact.value : null;
+  const visibleContactError = contactError && contactError.incidentId === selectedIncidentId && contactError.userId === userId ? contactError.message : '';
 
   useEffect(() => {
     if (!canManageAssignment) return;
@@ -111,19 +120,51 @@ export default function ReportsScreen() {
   }, [canManageAssignment, managementDepartmentId]);
 
   useEffect(() => {
-    if (!selectedIncidentId) return;
+    if (!selectedIncidentId || !userId || !isAuthenticated) return;
     let active = true;
     listReportEvidence(selectedIncidentId)
-      .then((items) => { if (active) setExistingEvidence(items); })
-      .catch(() => { if (active) { setExistingEvidence([]); setEvidenceError('No fue posible abrir las fotografías del reporte.'); } })
+      .then((items) => { if (active) { setExistingEvidence(items); setEvidenceOwner(evidenceIdentityKey); setEvidenceError(''); } })
+      .catch(() => { if (active) { setExistingEvidence([]); setEvidenceOwner(evidenceIdentityKey); setEvidenceError('No fue posible abrir las fotografías del reporte.'); } })
       .finally(() => { if (active) setIsLoadingEvidence(false); });
     return () => { active = false; };
-  }, [databaseRole, selectedIncidentId]);
+  }, [evidenceIdentityKey, evidenceRevision, isAuthenticated, selectedIncidentId, userId]);
+
+  useEffect(() => {
+    const client = supabase;
+    if (!client || !selectedIncidentId || !userId || !isAuthenticated) return;
+    let active = true;
+    const refresh = () => { if (active) setEvidenceRevision((value) => value + 1); };
+    const channel = client.channel(`report-evidence-${selectedIncidentId}-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'incident_evidence', filter: `incident_id=eq.${selectedIncidentId}` }, refresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'incident_evidence', filter: `incident_id=eq.${selectedIncidentId}` }, refresh)
+      .subscribe((status) => { if (active && status === 'SUBSCRIBED') refresh(); });
+    const appState = AppState.addEventListener('change', (state) => { if (state === 'active') refresh(); });
+    // Reconcile missed changes and renew private URLs before their 15-minute expiry.
+    const fallback = setInterval(refresh, 2 * 60_000);
+    return () => {
+      active = false;
+      clearInterval(fallback);
+      appState.remove();
+      void client.removeChannel(channel);
+    };
+  }, [isAuthenticated, selectedIncidentId, userId]);
+
+  useEffect(() => {
+    if (databaseRole !== 'administrador' || !selectedIncidentId) return;
+    let active = true;
+    getReporterContact(selectedIncidentId)
+      .then((contact) => { if (active) setReporterContact({ incidentId: selectedIncidentId, userId, value: contact }); })
+      .catch(() => { if (active) setContactError({ incidentId: selectedIncidentId, userId, message: 'No fue posible consultar el contacto del ciudadano.' }); });
+    return () => { active = false; };
+  }, [databaseRole, selectedIncidentId, userId]);
 
   const selectReport = (incident: Incident) => {
+    setReporterContact(null);
+    setContactError(null);
     setIsLoadingEvidence(true);
     setEvidenceError('');
     setExistingEvidence([]);
+    setEvidenceOwner('');
     setSelected(incident);
     setNextStatus(null);
     setStatusNote('');
@@ -165,7 +206,7 @@ export default function ReportsScreen() {
       await uploadReportEvidence(selected.id, workEvidence, staffEvidenceKind);
       setWorkEvidence(null);
       setEvidenceMessage('La evidencia quedó asociada al historial del reporte.');
-      setExistingEvidence(await listReportEvidence(selected.id));
+      setEvidenceRevision((value) => value + 1);
     } catch (uploadError) {
       setEvidenceError(uploadError instanceof Error ? uploadError.message : 'No fue posible adjuntar la evidencia.');
     } finally { setIsUploadingEvidence(false); }
@@ -224,14 +265,15 @@ export default function ReportsScreen() {
         <DetailRow label="Departamento" value={selected.department} />
         <DetailRow label="Ubicación" value={selected.location} />
         {selected.latitude != null && selected.longitude != null ? <DetailRow label="Coordenadas GPS" value={`${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}`} /> : null}
-        {databaseRole === 'administrador' ? <DetailRow label="Ciudadano" value={selected.citizenName} /> : null}
-        {databaseRole === 'administrador' && selected.citizenEmail ? <DetailRow label="Correo" value={selected.citizenEmail} /> : null}
+        {databaseRole === 'administrador' && visibleContact?.name ? <DetailRow label="Ciudadano" value={visibleContact.name} /> : null}
+        {databaseRole === 'administrador' && visibleContact?.email ? <DetailRow label="Correo" value={visibleContact.email} /> : null}
+        {databaseRole === 'administrador' && visibleContactError ? <Text style={styles.inlineErrorText}>{visibleContactError}</Text> : null}
       </View>
       {databaseRole !== 'ciudadano' && selected.latitude != null && selected.longitude != null ? <ReportLocationMap latitude={selected.latitude} longitude={selected.longitude} label={selected.location} /> : null}
       <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="images-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Evidencias del reporte</Text><Text style={styles.managementCopy}>Fotografías iniciales y evidencias agregadas durante la atención.</Text></View></View>
-        {databaseRole === 'ciudadano' && selected.status === 'CERRADO' ? <View style={styles.resolutionNotice}><Ionicons name="checkmark-done-circle-outline" size={22} color={colors.primary} /><Text style={styles.resolutionNoticeText}>{existingEvidence.some((item) => item.kind === 'FINAL') ? 'El departamento adjuntó evidencia del trabajo finalizado.' : 'El reporte fue resuelto. La fotografía del resultado es opcional y el departamento no adjuntó una.'}</Text></View> : null}
-        {isLoadingEvidence ? <View style={styles.evidenceLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.helperText}>Abriendo fotografías protegidas...</Text></View> : existingEvidence.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.evidenceGallery}>{existingEvidence.map((item, index) => <View key={item.id} style={styles.evidenceItem}><Image accessibilityLabel={`Evidencia ${index + 1} del reporte`} source={{ uri: item.url }} style={styles.evidenceImage} /><Text style={styles.evidenceCaption}>{item.kind === 'INICIAL' ? 'Evidencia inicial' : item.kind === 'ADICIONAL' ? 'Evidencia ciudadana' : item.kind === 'FINAL' ? 'Resultado del departamento' : item.kind === 'AVANCE' ? 'Avance del departamento' : `Evidencia ${index + 1}`} · {item.createdAt}</Text></View>)}</ScrollView> : <View style={styles.noTransitions}><Ionicons name="image-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{evidenceError || 'Este reporte todavía no tiene fotografías disponibles.'}</Text></View>}
+        {databaseRole === 'ciudadano' && selected.status === 'CERRADO' ? <View style={styles.resolutionNotice}><Ionicons name="checkmark-done-circle-outline" size={22} color={colors.primary} /><Text style={styles.resolutionNoticeText}>{visibleEvidence.some((item) => item.kind === 'FINAL') ? 'El departamento adjuntó evidencia del trabajo finalizado.' : 'El reporte fue resuelto. La fotografía del resultado es opcional y el departamento no adjuntó una.'}</Text></View> : null}
+        {isLoadingEvidence ? <View style={styles.evidenceLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.helperText}>Abriendo fotografías protegidas...</Text></View> : visibleEvidence.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.evidenceGallery}>{visibleEvidence.map((item, index) => <View key={item.id} style={styles.evidenceItem}><Image accessibilityLabel={`Evidencia ${index + 1} del reporte`} source={{ uri: item.url }} style={styles.evidenceImage} /><Text style={styles.evidenceCaption}>{item.kind === 'INICIAL' ? 'Evidencia inicial' : item.kind === 'ADICIONAL' ? 'Evidencia ciudadana' : item.kind === 'FINAL' ? 'Resultado del departamento' : item.kind === 'AVANCE' ? 'Avance del departamento' : `Evidencia ${index + 1}`} · {item.createdAt}</Text></View>)}</ScrollView> : <View style={styles.noTransitions}><Ionicons name="image-outline" size={20} color={colors.muted} /><Text style={styles.noTransitionsText}>{evidenceError || 'Este reporte todavía no tiene fotografías disponibles.'}</Text></View>}
       </View>
       {canAssignSelected && <View style={styles.managementCard}>
         <View style={styles.managementHeader}><View style={[styles.managementIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="people-outline" size={22} color={visual.primary} /></View><View style={styles.managementTitleBlock}><Text style={styles.managementTitle}>Asignación operativa</Text><Text style={styles.managementCopy}>Elige prioridad, departamento y responsable. Al confirmar, el reporte pasará a Asignado.</Text></View></View>

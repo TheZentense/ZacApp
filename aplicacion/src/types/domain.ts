@@ -26,8 +26,6 @@ export type Incident = {
   status: IncidentStatus;
   createdAt: string;
   updatedAt: string;
-  citizenName: string;
-  citizenEmail: string;
   latitude?: number | null;
   longitude?: number | null;
   department: string;

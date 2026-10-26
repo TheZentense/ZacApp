@@ -77,7 +77,12 @@ function clientDouble(resolveQuery = () => ({ data: [], error: null }), options 
       if (!options.rpc) throw new Error('Unverified RPC must not execute');
       calls.push({ operation: 'rpc', name, parameters });
       return options.rpc(name, parameters);
-    }
+    },
+    functions: { invoke: async (name, parameters) => {
+      calls.push({ operation: 'edge', name, parameters });
+      if (!options.functionInvoke) throw new Error('Unverified Edge Function must not execute');
+      return options.functionInvoke(name, parameters);
+    } }
   };
   Object.assign(client.auth, options.auth);
   return { client, calls };
@@ -115,8 +120,8 @@ class LocalPhotoDouble {
   async arrayBuffer() { return new ArrayBuffer(64); }
 }
 
-function reportsWithPhotos(client, File = LocalPhotoDouble) {
-  return loader({ '@/lib/supabase': { supabase: client }, 'expo-file-system': { File } })('src/services/reports.ts');
+function reportsWithPhotos(client, File = LocalPhotoDouble, protectedGuest = false) {
+  return loader({ '@/lib/supabase': { supabase: client }, 'expo-file-system': { File }, '@/lib/guestReportSecurity': { guestReportProtectionEnabled: () => protectedGuest } })('src/services/reports.ts');
 }
 
 test('creation uploads one to five JPEGs before a single atomic RPC without direct inserts or client identity fields', async () => {
@@ -224,16 +229,33 @@ test('creation RPC errors or empty results clean every uploaded photo without fa
 
 test('workflow permissions come from the verified database role, never the shared visual role', () => {
   const policy = loader()('src/services/sessionPolicy.ts');
-  for (const role of ['coordinador', 'comunicacion', 'supervisor', 'employee', 'superadmin', null, undefined]) {
+  for (const role of ['employee', 'superadmin', null, undefined]) {
     const permissions = policy.workflowPermissionsFor(role);
     assert.equal(permissions.generalReports, false);
     assert.equal(permissions.departmentReports, false);
     assert.equal(policy.reportReadScopeFor(role), 'pending');
   }
   assert.equal(policy.reportReadScopeFor('administrador'), 'general');
-  assert.equal(policy.reportReadScopeFor('mantenimiento'), 'department');
+  assert.equal(policy.reportReadScopeFor('supervisor'), 'general');
+  for (const role of ['mantenimiento', 'coordinador', 'comunicacion']) {
+    assert.equal(policy.reportReadScopeFor(role), 'department');
+  }
   assert.equal(policy.reportReadScopeFor('operador'), 'personal');
   assert.equal(policy.reportReadScopeFor('ciudadano'), 'citizen');
+});
+
+test('reporter contact uses a separate administrator-gated RPC', async () => {
+  const { client, calls } = clientDouble(undefined, {
+    rpc: async (name, parameters) => {
+      assert.equal(name, 'get_incident_reporter_contact');
+      assert.deepEqual({ ...parameters }, { p_incident_id: 'incident-1' });
+      return { data: [{ reporter_name: 'Nombre de prueba', reporter_email: 'persona@example.invalid' }], error: null };
+    }
+  });
+  const contact = await reportsWithPhotos(client).getReporterContact('incident-1');
+  assert.deepEqual({ ...contact }, { name: 'Nombre de prueba', email: 'persona@example.invalid' });
+  assert.equal(calls.filter((call) => call.operation === 'rpc').length, 1);
+  assert.ok(!calls.some((call) => call.table === 'incidents'));
 });
 
 test('operator cannot read another assignee history or photos even in the same department', async () => {
@@ -255,15 +277,16 @@ test('operator cannot read another assignee history or photos even in the same d
   }
 });
 
-test('citizen, operator and department reads include verified query restrictions', async () => {
-  for (const role of ['ciudadano', 'operador', 'mantenimiento', 'administrador']) {
+test('every database role reads its authorized rows without requesting reporter contact', async () => {
+  for (const role of ['ciudadano', 'operador', 'mantenimiento', 'coordinador', 'comunicacion', 'supervisor', 'administrador']) {
     const { client, calls } = clientDouble((query) => ({ data: query.fields.includes('category:') ? [reportsFixture(2)] : [], error: null }), { profile: { role, department_id: 7 } });
     const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
     await reports.listReports();
     const queries = calls.filter((call) => call.table === 'incidents');
     assert.equal(queries.length, 1);
     for (const query of queries) {
-      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'operador' ? ['assigned_to', 'owner'] : role === 'mantenimiento' ? ['assigned_department_id', 7] : null;
+      assert.doesNotMatch(query.fields, /reporter_name|reporter_email/);
+      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'operador' ? ['assigned_to', 'owner'] : ['mantenimiento', 'coordinador', 'comunicacion'].includes(role) ? ['assigned_department_id', 7] : null;
       if (expected) assert.ok(query.filters.some(([key, value]) => key === expected[0] && value === expected[1]));
       else assert.equal(query.filters.length, 0);
     }
@@ -276,7 +299,7 @@ test('unverified profiles or missing departments never fall back to a general re
     { profile: { role: 'mantenimiento', department_id: 'Agua potable' } },
     { profile: { role: 'mantenimiento', department_id: -1 } },
     { profileError: { message: 'Profile denied' } },
-    { profile: { role: 'supervisor', department_id: 7 } }
+    { profile: { role: 'coordinador', department_id: null } }
   ]) {
     const { client, calls } = clientDouble(() => { throw new Error('Unexpected report query'); }, options);
     const reports = loader({ '@/lib/supabase': { supabase: client } })('src/services/reports.ts');
@@ -325,7 +348,7 @@ function workflowScreenHarness(databaseRole, incidents = [], visualRole, { isLoa
   const slots = [];
   let index = 0;
   const jsx = (type, props) => ({ type, props });
-  const role = visualRole ?? ({ administrador: 'superadmin', mantenimiento: 'maintenance', operador: 'employee', ciudadano: 'citizen' }[databaseRole] ?? 'employee');
+  const role = visualRole ?? ({ administrador: 'superadmin', supervisor: 'admin', mantenimiento: 'maintenance', operador: 'employee', ciudadano: 'citizen' }[databaseRole] ?? 'employee');
   const components = Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'ScrollView', 'Image', 'ActivityIndicator'].map((name) => [name, name]));
   const load = loader({
     react: {
@@ -351,12 +374,25 @@ function workflowScreenHarness(databaseRole, incidents = [], visualRole, { isLoa
   };
 }
 
-test('mobile report navigation distinguishes department reports from personal tasks for all four roles', () => {
-  for (const [role, label] of [['administrador', 'Reportes'], ['mantenimiento', 'Departamento'], ['operador', 'Mis tareas'], ['ciudadano', 'Mis reportes']]) {
+test('mobile report navigation distinguishes general, department and personal views by database role', () => {
+  for (const [role, label] of [['administrador', 'Reportes'], ['supervisor', 'Reportes'], ['mantenimiento', 'Departamento'], ['coordinador', 'Departamento'], ['comunicacion', 'Departamento'], ['operador', 'Mis tareas'], ['ciudadano', 'Mis reportes']]) {
     const tree = workflowScreenHarness(role, [], undefined, { width: 320 }).render('app/(tabs)/_layout.tsx');
     const reportsTab = nodes(tree).find((node) => node.props?.name === 'reports');
     assert.equal(reportsTab.props.options.tabBarLabel, label);
     assert.equal(tree.props.screenOptions.tabBarPosition, 'bottom');
+  }
+});
+
+test('supervisor and department readers see reports without administrative controls', () => {
+  for (const role of ['supervisor', 'coordinador', 'comunicacion']) {
+    const harness = workflowScreenHarness(role, [{ ...reportsFixture('MEDIA'), status: 'VALIDADO' }]);
+    let tree = harness.render();
+    nodes(tree).find((node) => node.type === 'IncidentCard').props.onPress();
+    tree = harness.render();
+    assert.ok(!nodes(tree).some((node) => node.props?.label === 'Asignar reporte' || node.props?.label === 'Confirmar cambio'));
+    const menu = harness.render('app/(tabs)/admin-menu.tsx');
+    const labels = nodes(menu).map((node) => node.props?.children).filter((value) => typeof value === 'string').join(' ');
+    assert.doesNotMatch(labels, /Usuarios y accesos|Categorías y áreas|Asignaciones/);
   }
 });
 
@@ -1089,9 +1125,11 @@ test('the screen retries creation after a failed photo read and blocks overlappi
   assert.equal(harness.alerts.length, 1);
 });
 
-function sessionHarness(client) {
+function sessionHarness(client, options = {}) {
   const slots = [];
   const effects = [];
+  const appListeners = [];
+  const localStore = new Map();
   let index = 0;
   const react = {
     createContext: () => ({ Provider: 'SessionProviderDouble' }),
@@ -1108,13 +1146,17 @@ function sessionHarness(client) {
   const module = loader({
     react,
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }) },
-    'react-native': { Platform: { OS: 'web' } },
+    'react-native': { Platform: { OS: options.platform ?? 'web' }, AppState: { addEventListener: (_event, listener) => { appListeners.push(listener); return { remove() {} }; } } },
+    '@react-native-async-storage/async-storage': { getItem: async (key) => localStore.get(key) ?? null, setItem: async (key, value) => { localStore.set(key, value); }, removeItem: async (key) => { localStore.delete(key); } },
+    '@/lib/biometricAccess': { clearBiometricAccess: async () => {}, enableBiometricAccess: async () => false, hasStrongBiometrics: async () => false, isBiometricEnabledFor: async () => false, verifyBiometricAccess: async () => false, ...options.biometric },
     'expo-linking': { getInitialURL: async () => null, createURL: () => 'zacapp://reset-password', addEventListener: () => ({ remove() {} }) },
     '@/lib/supabase': { supabase: client, isSupabaseConfigured: true }
   })('src/context/SessionContext.tsx');
   return {
     render() { index = 0; return module.SessionProvider({ children: null }).props.value; },
-    mount() { return effects.splice(0).map((effect) => effect()); }
+    mount() { return effects.splice(0).map((effect) => effect()); },
+    appState(state) { for (const listener of appListeners) listener(state); },
+    localStore
   };
 }
 
@@ -1153,7 +1195,7 @@ test('mobile session protection returns to profile, confirms sign out and expire
 });
 
 test('the session provider exposes an anonymous identity as an authenticated citizen guest', async () => {
-  const { client } = clientDouble(() => ({ data: { full_name: 'Ciudadano invitado', role: 'ciudadano', department_id: null, department: null }, error: null }));
+  const { client } = clientDouble(() => ({ data: { full_name: 'Ciudadano invitado', role: 'ciudadano', status: 'ACTIVO', department_id: null, department: null }, error: null }));
   client.auth.getSession = async () => ({ data: { session: { user: { id: 'guest-id', email: null, is_anonymous: true, user_metadata: {} } } }, error: null });
   client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
   const harness = sessionHarness(client);
@@ -1181,7 +1223,7 @@ test('a delayed administrative profile cannot replace a newer citizen identity',
   await new Promise(setImmediate);
   authListener('SIGNED_IN', { user: { id: 'new', email: 'new@example.invalid' } });
   await new Promise((resolve) => setTimeout(resolve, 5));
-  newProfile.resolve({ data: { full_name: 'Nuevo', role: 'ciudadano', department_id: 7, department: { name: 'Área real' } }, error: null });
+  newProfile.resolve({ data: { full_name: 'Nuevo', role: 'ciudadano', status: 'ACTIVO', department_id: 7, department: { name: 'Área real' } }, error: null });
   await new Promise(setImmediate);
   oldProfile.resolve({ data: { full_name: 'Anterior', role: 'administrador', department: null }, error: null });
   await new Promise(setImmediate);
@@ -1297,6 +1339,19 @@ test('operator RLS migration isolates tasks, history, evidence and transitions b
   assert.match(sql, /incident_row\.assigned_to is distinct from actor_id/);
   assert.match(sql, /users read permitted incident evidence/);
   assert.doesNotMatch(sql, /current_user_role\(\) <> 'ciudadano'/);
+});
+
+test('prepared profile and contact migration restricts coordinator rows and reporter columns', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261026120000_scope_profiles_and_reporter_contact.sql'), 'utf8');
+  assert.match(sql, /department_id = \(select private\.current_department_id\(\)\)/);
+  assert.match(sql, /\(select private\.current_user_role\(\)\) = 'coordinador'/);
+  assert.match(sql, /revoke select on public\.incidents from public, anon, authenticated/);
+  assert.match(sql, /grant select \([\s\S]*id, citizen_id, category_id[\s\S]*submission_kind[\s\S]*\) on public\.incidents to authenticated/);
+  assert.doesNotMatch(sql.match(/grant select \([\s\S]*?\) on public\.incidents to authenticated/)?.[0] ?? '', /reporter_name|reporter_email/);
+  assert.match(sql, /get_incident_reporter_contact\(p_incident_id uuid\)[\s\S]*security definer\s+set search_path = ''/);
+  assert.match(sql, /p\.id = \(select auth\.uid\(\)\)[\s\S]*p\.status = 'ACTIVO'[\s\S]*p\.role = 'administrador'/);
+  assert.match(sql, /revoke all on function public\.get_incident_reporter_contact\(uuid\) from public, anon, authenticated/);
+  assert.match(sql, /grant execute on function public\.get_incident_reporter_contact\(uuid\) to authenticated/);
 });
 
 // Source-level audit of ordered repository migrations, not a live PostgreSQL test.
@@ -1531,7 +1586,7 @@ test('Turnstile protects every public authentication entry without exposing its 
   assert.match(session, /signUp\([\s\S]*captchaToken/);
   assert.match(session, /resetPasswordForEmail[\s\S]*captchaToken/);
   assert.match(login, /action="zacapp_login"/);
-  assert.match(report, /action="zacapp_reporte_anonimo"/);
+  assert.match(report, /captchaAction = protectedGuestFlow && isAuthenticated \? 'zacapp_reporte_envio' : 'zacapp_reporte_anonimo'/);
   assert.match(report, /signInAsGuest\(captchaToken/);
   assert.match(register, /action="zacapp_registro"/);
   assert.match(recovery, /action="zacapp_recuperacion"/);
@@ -1539,4 +1594,608 @@ test('Turnstile protects every public authentication entry without exposing its 
   assert.match(nativeChallenge, /ReactNativeWebView\.postMessage/);
   assert.match(publicEnvironment, /EXPO_PUBLIC_TURNSTILE_SITE_KEY=/);
   assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
+});
+
+test('Android auth storage migrates a legacy token only after encryption succeeds', async () => {
+  const legacy = new Map([['sb-local-auth-token', 'session-token']]);
+  const secured = new Map();
+  let rejectWrite = false;
+  const storage = loader({
+    '@react-native-async-storage/async-storage': {
+      getItem: async (key) => legacy.get(key) ?? null,
+      setItem: async (key, value) => { legacy.set(key, value); },
+      removeItem: async (key) => { legacy.delete(key); }
+    },
+    'expo-secure-store': {
+      getItemAsync: async (key) => secured.get(key) ?? null,
+      setItemAsync: async (key, value) => { if (rejectWrite) throw new Error('Keystore failed'); secured.set(key, value); },
+      deleteItemAsync: async (key) => { secured.delete(key); }
+    }
+  })('src/lib/secureAuthStorage.ts').secureAuthStorage;
+
+  rejectWrite = true;
+  await assert.rejects(storage.getItem('sb-local-auth-token'), /Keystore failed/);
+  assert.equal(legacy.get('sb-local-auth-token'), 'session-token');
+  rejectWrite = false;
+  assert.equal(await storage.getItem('sb-local-auth-token'), 'session-token');
+  assert.equal(legacy.has('sb-local-auth-token'), false);
+  assert.equal(secured.get('sb-local-auth-token'), 'session-token');
+  await storage.removeItem('sb-local-auth-token');
+  assert.equal(secured.has('sb-local-auth-token'), false);
+});
+
+test('biometric access requires strong Android biometrics and rejects an invalidated protected key', async () => {
+  const entries = new Map();
+  const prompts = [];
+  let level = 2;
+  const access = loader({
+    'expo-local-authentication': {
+      SecurityLevel: { BIOMETRIC_STRONG: 3 },
+      hasHardwareAsync: async () => true,
+      isEnrolledAsync: async () => true,
+      getEnrolledLevelAsync: async () => level,
+      authenticateAsync: async (options) => { prompts.push(options); return { success: true }; }
+    },
+    'expo-secure-store': {
+      isAvailableAsync: async () => true,
+      canUseBiometricAuthentication: () => true,
+      getItemAsync: async (key) => entries.get(key) ?? null,
+      setItemAsync: async (key, value) => { entries.set(key, value); },
+      deleteItemAsync: async (key) => { entries.delete(key); }
+    }
+  })('src/lib/biometricAccess.ts');
+
+  assert.equal(await access.hasStrongBiometrics(), false);
+  assert.equal(await access.enableBiometricAccess('owner'), false);
+  assert.equal(prompts.length, 0);
+  level = 3;
+  assert.equal(await access.enableBiometricAccess('owner'), true);
+  assert.equal(await access.verifyBiometricAccess('other'), false);
+  assert.equal(await access.verifyBiometricAccess('owner'), true);
+  assert.ok(prompts.every((options) => options.biometricsSecurityLevel === 'strong' && options.disableDeviceFallback === true));
+  entries.delete('zacapp.biometric.proof');
+  assert.equal(await access.verifyBiometricAccess('owner'), false);
+});
+
+test('a restored Android staff session stays locked until biometric and Supabase/profile verification finish', async () => {
+  const user = { id: 'staff-id', email: 'staff@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client, calls } = clientDouble(() => ({ data: { full_name: 'Personal', phone: '', role: 'operador', status: 'ACTIVO', department_id: 7, department: { name: 'Agua' } }, error: null }));
+  let refreshStarts = 0;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.getUser = async () => ({ data: { user }, error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  client.auth.stopAutoRefresh = () => {};
+  client.auth.startAutoRefresh = () => { refreshStarts += 1; };
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async (id) => id === user.id,
+    verifyBiometricAccess: async (id) => id === user.id
+  } });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  const locked = harness.render();
+  assert.equal(locked.isLocked, true);
+  assert.equal(locked.isAuthenticated, false);
+  assert.equal(locked.databaseRole, null);
+  assert.equal(locked.biometricEnabled, true);
+  assert.equal(calls.filter((call) => call.table === 'profiles').length, 0);
+  await locked.unlockWithBiometrics();
+  const unlocked = harness.render();
+  assert.equal(unlocked.isLocked, false);
+  assert.equal(unlocked.isAuthenticated, true);
+  assert.equal(unlocked.databaseRole, 'operador');
+  assert.equal(unlocked.userId, user.id);
+  assert.equal(refreshStarts, 1);
+  harness.appState('background');
+  assert.equal(harness.render().isLocked, true);
+  assert.equal(harness.render().databaseRole, null);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('Android unlock rejects a different Supabase user before reading any profile', async () => {
+  const user = { id: 'staff-id', email: 'staff@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client, calls } = clientDouble(() => { throw new Error('Profile must remain unread'); });
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.getUser = async () => ({ data: { user: { ...user, id: 'other-id' } }, error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async () => true,
+    verifyBiometricAccess: async () => true
+  } });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  await assert.rejects(harness.render().unlockWithBiometrics(), /verificar la sesión/);
+  assert.equal(harness.render().isLocked, true);
+  assert.equal(calls.filter((call) => call.table === 'profiles').length, 0);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('Android password fallback unlocks only the same active account with its database role', async () => {
+  const user = { id: 'maintenance-id', email: 'maintenance@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client } = clientDouble(() => ({ data: { full_name: 'Mantenimiento', phone: '', role: 'mantenimiento', status: 'ACTIVO', department_id: 3, department: { name: 'Infraestructura' } }, error: null }));
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  client.auth.signInWithPassword = async ({ email, password }) => {
+    assert.equal(email, user.email);
+    assert.equal(password, 'correct-password');
+    return { data: { user }, error: null };
+  };
+  const harness = sessionHarness(client, { platform: 'android' });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  assert.equal(harness.render().isLocked, true);
+  await harness.render().unlockWithPassword('correct-password');
+  const unlocked = harness.render();
+  assert.equal(unlocked.isLocked, false);
+  assert.equal(unlocked.databaseRole, 'mantenimiento');
+  assert.equal(unlocked.departmentId, 3);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('an inactive Android account is signed out and never receives its former role', async () => {
+  const user = { id: 'inactive-id', email: 'inactive@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client } = clientDouble(() => ({ data: { full_name: 'Inactivo', role: 'administrador', status: 'INACTIVO', department_id: null, department: null }, error: null }));
+  let signedOut = 0;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.getUser = async () => ({ data: { user }, error: null });
+  client.auth.signOut = async () => { signedOut += 1; return { error: null }; };
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async () => true,
+    verifyBiometricAccess: async () => true
+  } });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  await assert.rejects(harness.render().unlockWithBiometrics(), /cuenta está inactiva/);
+  const session = harness.render();
+  assert.equal(session.isAuthenticated, false);
+  assert.equal(session.databaseRole, null);
+  assert.equal(signedOut, 1);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('an Android staff session older than ten background minutes is discarded before profile access', async () => {
+  const user = { id: 'expired-id', email: 'expired@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client, calls } = clientDouble(() => { throw new Error('Expired identity must not query profiles'); });
+  let signedOut = 0;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.signOut = async () => { signedOut += 1; return { error: null }; };
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client, { platform: 'android' });
+  harness.localStore.set('@zacapp/security/background-at', String(Date.now() - 11 * 60 * 1000));
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  const session = harness.render();
+  assert.equal(signedOut, 1);
+  assert.equal(session.isAuthenticated, false);
+  assert.equal(session.databaseRole, null);
+  assert.equal(calls.filter((call) => call.table === 'profiles').length, 0);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('Android guest sessions keep their existing flow and refresh without a biometric lock', async () => {
+  const user = { id: 'guest-id', email: null, is_anonymous: true, user_metadata: {} };
+  const { client } = clientDouble(() => ({ data: { full_name: 'Invitado', role: 'ciudadano', status: 'ACTIVO', department_id: null, department: null }, error: null }));
+  let refreshStarts = 0;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  client.auth.startAutoRefresh = () => { refreshStarts += 1; };
+  const harness = sessionHarness(client, { platform: 'android' });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  const session = harness.render();
+  assert.equal(session.isLocked, false);
+  assert.equal(session.isGuest, true);
+  assert.equal(session.isAuthenticated, true);
+  assert.equal(session.databaseRole, 'ciudadano');
+  assert.equal(refreshStarts, 1);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('signing out on Android removes biometric eligibility and verified role', async () => {
+  const user = { id: 'staff-id', email: 'staff@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client } = clientDouble(() => ({ data: { full_name: 'Personal', role: 'operador', status: 'ACTIVO', department_id: 2, department: null }, error: null }));
+  let revoked = 0;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.getUser = async () => ({ data: { user }, error: null });
+  client.auth.signOut = async () => ({ error: null });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async () => true,
+    verifyBiometricAccess: async () => true,
+    clearBiometricAccess: async () => { revoked += 1; }
+  } });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  await harness.render().unlockWithBiometrics();
+  await harness.render().signOut();
+  const session = harness.render();
+  assert.equal(revoked, 1);
+  assert.equal(session.biometricEnabled, false);
+  assert.equal(session.isAuthenticated, false);
+  assert.equal(session.databaseRole, null);
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('a pending Android sign-out hides the previous account before its network request finishes', async () => {
+  const user = { id: 'staff-id', email: 'staff@example.invalid', is_anonymous: false, user_metadata: {} };
+  const { client } = clientDouble(() => ({ data: { full_name: 'Personal', role: 'operador', status: 'ACTIVO', department_id: 2, department: null }, error: null }));
+  let finishSignOut;
+  client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+  client.auth.getUser = async () => ({ data: { user }, error: null });
+  client.auth.signOut = () => new Promise((resolve) => { finishSignOut = () => resolve({ error: null }); });
+  client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async () => true,
+    verifyBiometricAccess: async () => true
+  } });
+  harness.render(); const cleanups = harness.mount();
+  await new Promise(setImmediate);
+  await harness.render().unlockWithBiometrics();
+  assert.equal(harness.render().databaseRole, 'operador');
+  const pending = harness.render().signOut();
+  await Promise.resolve();
+  const hidden = harness.render();
+  assert.equal(hidden.isAuthenticated, false);
+  assert.equal(hidden.databaseRole, null);
+  assert.equal(hidden.userId, null);
+  assert.equal(hidden.isLocked, false);
+  assert.equal(typeof finishSignOut, 'function');
+  finishSignOut();
+  await pending;
+  cleanups.forEach((cleanup) => cleanup?.());
+});
+
+test('protected guest creation requires a fresh token and server permit before its atomic RPC', async () => {
+  const { client, calls } = creationClientDouble({
+    auth: { getUser: async () => ({ data: { user: { id: 'owner', is_anonymous: true } }, error: null }) },
+    functionInvoke: async (name, parameters) => {
+      assert.equal(name, 'verify-guest-report');
+      assert.equal(parameters.body.turnstileToken, 'fresh-token');
+      return { data: { ok: true }, error: null };
+    }
+  });
+  const service = reportsWithPhotos(client, LocalPhotoDouble, true);
+  await assert.rejects(service.createReport(reportInput()), /verificación nueva/);
+  assert.equal(calls.some((call) => call.operation === 'upload'), false);
+
+  await service.createReport({ ...reportInput(), turnstileToken: 'fresh-token' });
+  const operations = calls.filter((call) => ['upload', 'edge', 'rpc'].includes(call.operation));
+  assert.deepEqual(operations.map((call) => call.operation), ['edge', 'upload', 'rpc']);
+  assert.equal(operations[0].parameters.body.incidentId, operations[2].parameters.p_incident_id);
+});
+
+test('failed guest Siteverify prevents photo uploads and incident creation', async () => {
+  const { client, calls } = creationClientDouble({
+    auth: { getUser: async () => ({ data: { user: { id: 'owner', is_anonymous: true } }, error: null }) },
+    functionInvoke: async () => ({ data: null, error: new Error('challenge rejected') })
+  });
+  await assert.rejects(reportsWithPhotos(client, LocalPhotoDouble, true).createReport({ ...reportInput(), turnstileToken: 'used-token' }), /verificación/);
+  assert.equal(calls.filter((call) => call.operation === 'edge').length, 1);
+  assert.equal(calls.filter((call) => call.operation === 'upload').length, 0);
+  assert.equal(calls.filter((call) => call.operation === 'remove').length, 0);
+  assert.equal(calls.filter((call) => call.operation === 'rpc').length, 0);
+});
+
+test('Edge Turnstile validation binds a verified anonymous user, action, host and incident before permit issuance', async () => {
+  const functionModule = loader({}, { Request, Response })('supabase/functions/verify-guest-report/index.ts');
+  const incidentId = '00000000-0000-4000-8000-000000000001';
+  const userId = '00000000-0000-4000-8000-000000000002';
+  const environment = {
+    SUPABASE_URL: 'https://supabase.example.invalid',
+    SUPABASE_ANON_KEY: 'public-anon-key',
+    SUPABASE_SERVICE_ROLE_KEY: 'server-only-key',
+    TURNSTILE_SECRET_KEY: 'server-only-turnstile-secret',
+    TURNSTILE_ALLOWED_HOSTNAMES: 'zacapp.example.invalid',
+    ZACAPP_ALLOWED_ORIGINS: 'https://zacapp.example.invalid'
+  };
+  const request = () => new Request('https://edge.example.invalid/functions/v1/verify-guest-report', {
+    method: 'POST',
+    headers: { origin: 'https://zacapp.example.invalid', authorization: 'Bearer user.jwt.token.with.enough.length' },
+    body: JSON.stringify({ incidentId, turnstileToken: 'fresh-token' })
+  });
+  const calls = [];
+  let valid = true;
+  let anonymous = true;
+  let action = 'zacapp_reporte_envio';
+  let hostname = 'zacapp.example.invalid';
+  const fetcher = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/auth/v1/user')) return new Response(JSON.stringify({ id: userId, is_anonymous: anonymous }), { status: 200 });
+    if (url.includes('/siteverify')) return new Response(JSON.stringify({ success: valid, action, hostname }), { status: 200 });
+    if (url.endsWith('/rpc/issue_guest_report_permit')) return new Response('true', { status: 200 });
+    throw new Error('Unexpected request');
+  };
+  const dependencies = { env: (name) => environment[name], fetcher };
+  const accepted = await functionModule.handleGuestReportVerification(request(), dependencies);
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(calls.map((call) => new URL(call.url).pathname), ['/auth/v1/user', '/turnstile/v0/siteverify', '/rest/v1/rpc/issue_guest_report_permit']);
+  assert.equal(calls[2].options.headers.apikey, 'server-only-key');
+  assert.deepEqual(JSON.parse(calls[2].options.body), { p_account_id: userId, p_incident_id: incidentId });
+
+  calls.length = 0;
+  valid = false;
+  const rejected = await functionModule.handleGuestReportVerification(request(), dependencies);
+  assert.equal(rejected.status, 403);
+  assert.equal(calls.some((call) => call.url.endsWith('/rpc/issue_guest_report_permit')), false);
+
+  for (const change of [() => { valid = true; action = 'zacapp_login'; }, () => { action = 'zacapp_reporte_envio'; hostname = 'other.example.invalid'; }]) {
+    calls.length = 0;
+    change();
+    assert.equal((await functionModule.handleGuestReportVerification(request(), dependencies)).status, 403);
+    assert.equal(calls.some((call) => call.url.endsWith('/rpc/issue_guest_report_permit')), false);
+  }
+  calls.length = 0;
+  anonymous = false;
+  assert.equal((await functionModule.handleGuestReportVerification(request(), dependencies)).status, 403);
+  assert.equal(calls.length, 1);
+});
+
+test('guest permit migration enforces one use in PostgreSQL without changing historical incidents', () => {
+  const sql = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/20261026130000_require_guest_turnstile_per_report.sql'), 'utf8');
+  assert.match(sql, /alter table private\.guest_report_permits enable row level security/i);
+  assert.match(sql, /revoke all on function public\.issue_guest_report_permit\(uuid, uuid\) from public, anon, authenticated/i);
+  assert.match(sql, /grant execute on function public\.issue_guest_report_permit\(uuid, uuid\) to service_role/i);
+  assert.match(sql, /before insert on public\.incidents/i);
+  assert.match(sql, /account_id = caller_id[\s\S]*incident_id = new\.id[\s\S]*consumed_at is null[\s\S]*expires_at > now\(\)/i);
+  assert.doesNotMatch(sql, /update public\.incidents|delete from public\.incidents/i);
+});
+
+test('report detail renews signed evidence on Realtime, foreground and identity change without showing an old user image', async () => {
+  const slots = [];
+  let index = 0;
+  let effects = [];
+  let foreground;
+  let periodicRefresh;
+  let reads = 0;
+  let identity = { role: 'employee', databaseRole: 'operador', userId: 'worker-a', department: 'Agua', isAuthenticated: true };
+  const removed = [];
+  const channels = [];
+  const client = {
+    channel(name) {
+      const channel = { name, bindings: [], on(_type, config, listener) { this.bindings.push({ config, listener }); return this; }, subscribe(listener) { this.onStatus = listener; return this; } };
+      channels.push(channel);
+      return channel;
+    },
+    removeChannel: async (channel) => { removed.push(channel); }
+  };
+  const component = loader({
+    react: {
+      useState(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = initial; return [slots[slot], (value) => { slots[slot] = typeof value === 'function' ? value(slots[slot]) : value; }]; },
+      useMemo: (callback) => callback(), useEffect: (callback) => { effects.push(callback); }
+    },
+    'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: 'Fragment' },
+    'react-native': {
+      ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'ScrollView', 'Image', 'ActivityIndicator'].map((name) => [name, name])),
+      AppState: { addEventListener: (_event, listener) => { foreground = listener; return { remove() { foreground = undefined; } }; } },
+      StyleSheet: { create: (value) => value }
+    },
+    '@expo/vector-icons': { Ionicons: 'Ionicons' },
+    'expo-image-picker': {}, 'expo-image-manipulator': { ImageManipulator: {}, SaveFormat: {} },
+    '@/components/IncidentCard': { IncidentCard: 'IncidentCard' },
+    '@/components/EmptyState': { EmptyState: 'EmptyState' },
+    '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
+    '@/components/AppButton': { AppButton: 'AppButton' },
+    '@/components/IncidentLocation': { IncidentHeatmap: 'IncidentHeatmap', ReportLocationMap: 'ReportLocationMap' },
+    '@/hooks/useReports': { useReports: () => ({ incidents: [{ ...reportsFixture('MEDIA'), id: 'shared-report' }], isLoading: false, error: '', reload: async () => {} }) },
+    '@/context/SessionContext': { useSession: () => identity },
+    '@/lib/supabase': { supabase: client },
+    '@/services/reports': { listReportEvidence: async () => [{ id: String(++reads), url: `https://signed.invalid/${identity.userId}/${reads}`, mimeType: 'image/jpeg', kind: 'INICIAL', createdAt: 'Hoy' }] }
+  }, { setInterval: (callback) => { periodicRefresh = callback; return 1; }, clearInterval: () => { periodicRefresh = undefined; } })('app/(tabs)/reports.tsx').default;
+  const render = () => { index = 0; effects = []; return component(); };
+  const imageUrls = (tree) => nodes(tree).filter((node) => node.type === 'Image').map((node) => node.props.source?.uri).filter(Boolean);
+
+  const listTree = render();
+  nodes(listTree).find((node) => node.type === 'IncidentCard').props.onPress();
+  render();
+  const initialCleanups = effects.map((effect) => effect());
+  await new Promise(setImmediate);
+  assert.equal(reads, 1);
+  assert.deepEqual(channels[0].bindings.map((binding) => binding.config.event), ['INSERT', 'UPDATE']);
+  assert.ok(imageUrls(render()).includes('https://signed.invalid/worker-a/1'));
+
+  channels[0].bindings[0].listener();
+  render(); effects[2](); await new Promise(setImmediate);
+  assert.equal(reads, 2);
+  foreground('active');
+  render(); effects[2](); await new Promise(setImmediate);
+  assert.equal(reads, 3);
+  periodicRefresh();
+  render(); effects[2](); await new Promise(setImmediate);
+  assert.equal(reads, 4);
+
+  identity = { ...identity, userId: 'worker-b' };
+  assert.equal(imageUrls(render()).some((url) => url.includes('worker-a')), false);
+  initialCleanups.forEach((cleanup) => cleanup?.());
+  assert.deepEqual(removed, [channels[0]]);
+  assert.equal(periodicRefresh, undefined);
+});
+
+test('the Android login route presents the usable biometric lock for a saved account', () => {
+  const login = loader({
+    react: { useState: (value) => [value, () => {}], useRef: (value) => ({ current: value }), useEffect: () => {} },
+    'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
+    'react-native': { Platform: { OS: 'android' }, useWindowDimensions: () => ({ width: 390 }), StyleSheet: { create: (value) => value } },
+    '@expo/vector-icons': { Ionicons: 'Ionicons' },
+    'expo-router': { router: {} },
+    '@/components/AppButton': { AppButton: 'AppButton' },
+    '@/components/TurnstileChallenge': { TurnstileChallenge: 'TurnstileChallenge' },
+    '@/components/BiometricLockScreen': { BiometricLockScreen: 'BiometricLockScreen' },
+    '@/context/SessionContext': { useSession: () => ({ isLocked: true, isAuthenticated: false, isGuest: false, isLoading: false }) }
+  }, { process: { env: {} } })('app/login.tsx').default;
+  const screen = login();
+  assert.equal(screen.type, 'BiometricLockScreen');
+  assert.equal(screen.props.embedded, true);
+});
+
+test('Android profile exposes biometric activation and deactivation inside account security', async () => {
+  const slots = [];
+  let index = 0;
+  let enabled = false;
+  let disabled = false;
+  const identity = {
+    role: 'employee', email: 'worker@example.invalid', fullName: 'Personal', phone: '', department: 'Agua', isGuest: false,
+    biometricAvailable: true, biometricEnabled: false,
+    enableBiometrics: async () => { enabled = true; identity.biometricEnabled = true; return true; },
+    disableBiometrics: async () => { disabled = true; identity.biometricEnabled = false; },
+    signOut: async () => {}, updatePassword: async () => {}, updateProfile: async () => {}
+  };
+  const profile = loader({
+    react: { useState(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = initial; return [slots[slot], (value) => { slots[slot] = typeof value === 'function' ? value(slots[slot]) : value; }]; } },
+    'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
+    'react-native': {
+      ...Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'ScrollView'].map((name) => [name, name])),
+      Platform: { OS: 'android' }, useWindowDimensions: () => ({ width: 390 }), StyleSheet: { create: (value) => value }, Alert: { alert() {} }
+    },
+    '@expo/vector-icons': { Ionicons: 'Ionicons' },
+    '@/components/AppButton': { AppButton: 'AppButton' },
+    'expo-router': { router: {} },
+    '@/context/SessionContext': { useSession: () => identity }
+  })('app/(tabs)/profile.tsx').default;
+  const render = () => { index = 0; return profile(); };
+  const security = nodes(render()).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Seguridad de la cuenta'));
+  assert.ok(security);
+  security.props.onPress();
+  const activate = nodes(render()).find((node) => node.type === 'AppButton' && node.props?.label === 'Activar biometría');
+  assert.ok(activate);
+  activate.props.onPress();
+  await new Promise(setImmediate);
+  assert.equal(enabled, true);
+  const deactivate = nodes(render()).find((node) => node.type === 'AppButton' && node.props?.label === 'Desactivar biometría');
+  assert.ok(deactivate);
+  deactivate.props.onPress();
+  await new Promise(setImmediate);
+  assert.equal(disabled, true);
+});
+
+test('tracking hides signed photos and history immediately when the authorized account changes', async () => {
+  const slots = [];
+  let index = 0;
+  let effects = [];
+  let evidenceAvailable = false;
+  let identity = { role: 'employee', databaseRole: 'operador', userId: 'worker-a', isAuthenticated: true };
+  const component = loader({
+    react: {
+      useState(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = initial; return [slots[slot], (value) => { slots[slot] = typeof value === 'function' ? value(slots[slot]) : value; }]; },
+      useMemo: (callback) => callback(), useEffect: (callback) => { effects.push(callback); }
+    },
+    'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: 'Fragment' },
+    'react-native': {
+      ...Object.fromEntries(['View', 'Text', 'Pressable', 'ScrollView', 'Image', 'ActivityIndicator'].map((name) => [name, name])),
+      AppState: { addEventListener: () => ({ remove() {} }) }, StyleSheet: { create: (value) => value }
+    },
+    '@expo/vector-icons': { Ionicons: 'Ionicons' },
+    '@/components/IncidentCard': { IncidentCard: 'IncidentCard' },
+    '@/components/EmptyState': { EmptyState: 'EmptyState' },
+    '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
+    '@/hooks/useReports': { useReports: () => ({ incidents: [{ ...reportsFixture('MEDIA'), id: 'shared-report' }], isLoading: false, error: '', reload: async () => {}, isPreview: false }) },
+    '@/context/SessionContext': { useSession: () => identity },
+    '@/services/reports': {
+      listReportHistory: async () => [{ id: 'event', previousStatus: null, newStatus: 'REGISTRADO', createdAt: 'Hoy', changedBy: identity.userId, note: `Nota ${identity.userId}` }],
+      listReportEvidence: async () => {
+        if (!evidenceAvailable) throw new Error('Temporary signing failure');
+        return [{ id: 'photo', url: `https://signed.invalid/${identity.userId}`, createdAt: 'Hoy' }];
+      }
+    },
+    '@/lib/supabase': { supabase: null }
+  })('app/(tabs)/tracking.tsx').default;
+  const render = () => { index = 0; effects = []; return component(); };
+  nodes(render()).find((node) => node.type === 'IncidentCard').props.onPress();
+  render();
+  effects.forEach((effect) => effect());
+  await new Promise(setImmediate);
+  let tree = render();
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'No fue posible abrir las fotografías. Intenta actualizar la consulta.'));
+  evidenceAvailable = true;
+  nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Actualizar historial y fotografías')).props.onPress();
+  render(); effects.forEach((effect) => effect());
+  await new Promise(setImmediate);
+  tree = render();
+  assert.equal(nodes(tree).some((node) => node.props?.children === 'No fue posible abrir las fotografías. Intenta actualizar la consulta.'), false);
+  assert.ok(nodes(tree).some((node) => node.type === 'Image' && node.props.source?.uri === 'https://signed.invalid/worker-a'));
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'Nota worker-a'));
+  identity = { ...identity, userId: 'worker-b' };
+  tree = render();
+  assert.equal(nodes(tree).some((node) => node.type === 'Image' && node.props.source?.uri === 'https://signed.invalid/worker-a'), false);
+  assert.equal(nodes(tree).some((node) => node.props?.children === 'Nota worker-a'), false);
+});
+
+test('biometric APK stays separate and refuses an unverified Supabase or enabled guest flag', () => {
+  const appConfig = require('../app.config.js');
+  const eas = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'eas.json'), 'utf8'));
+  assert.equal(eas.build['biometric-test'].extends, 'preview');
+  assert.equal(eas.build['biometric-test'].environment, 'preview');
+  assert.equal(eas.build['biometric-test'].channel, 'biometric-test');
+  assert.equal(eas.build['biometric-test'].env.ZACAPP_BUILD_VARIANT, 'biometric-test');
+  assert.equal(eas.build['biometric-test'].env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED, 'false');
+  assert.equal(eas.build.preview.distribution, 'internal');
+  assert.equal(eas.build.preview.android.buildType, 'apk');
+  const names = ['ZACAPP_BUILD_VARIANT', 'EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY', 'EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED'];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const base = { name: 'ZacApp', scheme: 'zacapp', android: { package: 'gt.edu.zacapp' }, version: '0.3.0', runtimeVersion: { policy: 'appVersion' } };
+  try {
+    delete process.env.ZACAPP_BUILD_VARIANT;
+    assert.deepEqual(appConfig({ config: base }), base);
+    process.env.ZACAPP_BUILD_VARIANT = 'biometric-test';
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://other.example.invalid';
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'public-anon-key';
+    process.env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED = 'false';
+    assert.throws(() => appConfig({ config: base }), /Supabase distinto/);
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://supabasekong-zkh1ndvdzgbhadhdf8xgvtxr.77.237.246.163.sslip.io';
+    delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+    assert.throws(() => appConfig({ config: base }), /clave anon pública/);
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'public-anon-key';
+    process.env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED = 'true';
+    assert.throws(() => appConfig({ config: base }), /Turnstile por reporte/);
+    process.env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED = 'false';
+    const testConfig = appConfig({ config: base });
+    assert.equal(testConfig.android.package, 'gt.edu.zacapp.biometrictest');
+    assert.equal(testConfig.scheme, 'zacapp-biometric-test');
+    assert.equal(testConfig.version, '0.3.0');
+    assert.deepEqual(testConfig.runtimeVersion, { policy: 'appVersion' });
+    assert.equal(base.android.package, 'gt.edu.zacapp');
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+test('biometric unlock restores only the verified database role for every registered account type', async () => {
+  const roles = [
+    ['administrador', 'superadmin'], ['supervisor', 'admin'],
+    ['coordinador', 'employee'], ['operador', 'employee'],
+    ['mantenimiento', 'maintenance'], ['comunicacion', 'employee'],
+    ['ciudadano', 'citizen']
+  ];
+  for (const [databaseRole, visualRole] of roles) {
+    const user = { id: `account-${databaseRole}`, email: `${databaseRole}@example.invalid`, is_anonymous: false, user_metadata: { role: 'administrador' } };
+    const { client } = clientDouble(() => ({
+      data: { full_name: 'Cuenta registrada', role: databaseRole, status: 'ACTIVO', department_id: databaseRole === 'ciudadano' ? null : 2, department: null },
+      error: null
+    }));
+    client.auth.getSession = async () => ({ data: { session: { user } }, error: null });
+    client.auth.getUser = async () => ({ data: { user }, error: null });
+    client.auth.onAuthStateChange = () => ({ data: { subscription: { unsubscribe() {} } } });
+    const harness = sessionHarness(client, { platform: 'android', biometric: {
+      hasStrongBiometrics: async () => true,
+      isBiometricEnabledFor: async () => true,
+      verifyBiometricAccess: async () => true
+    } });
+    harness.render(); const cleanups = harness.mount();
+    await new Promise(setImmediate);
+    assert.equal(harness.render().isLocked, true);
+    await harness.render().unlockWithBiometrics();
+    const session = harness.render();
+    assert.equal(session.databaseRole, databaseRole);
+    assert.equal(session.role, visualRole);
+    assert.equal(session.isAuthenticated, true);
+    assert.equal(session.userId, user.id);
+    cleanups.forEach((cleanup) => cleanup?.());
+  }
 });

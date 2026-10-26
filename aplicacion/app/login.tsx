@@ -6,6 +6,7 @@ import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
 import { TurnstileChallenge } from '@/components/TurnstileChallenge';
+import { BiometricLockScreen } from '@/components/BiometricLockScreen';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -18,7 +19,7 @@ export default function LoginScreen() {
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const passwordInputRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const { signIn, isAuthenticated, isGuest, isLoading } = useSession();
+  const { signIn, isAuthenticated, isGuest, isLoading, isLocked } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
@@ -27,8 +28,8 @@ export default function LoginScreen() {
   const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) router.replace(isGuest ? '/report/new' : '/(tabs)');
-  }, [isAuthenticated, isGuest, isLoading]);
+    if (!isLoading && !isLocked && isAuthenticated) router.replace(isGuest ? '/report/new' : '/(tabs)');
+  }, [isAuthenticated, isGuest, isLoading, isLocked]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -78,6 +79,8 @@ export default function LoginScreen() {
     setErrorMessage('');
     router.push('/report/new');
   };
+
+  if (isLocked) return <BiometricLockScreen embedded />;
 
   return (
     <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>

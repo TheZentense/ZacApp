@@ -2,7 +2,7 @@
   "expo": {
     "name": "ZacApp",
     "slug": "zacapp",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -54,7 +54,8 @@
           "locationWhenInUsePermission": "Permitir que ZacApp acceda a tu ubicación para registrar el punto exacto del incidente."
         }
       ],
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

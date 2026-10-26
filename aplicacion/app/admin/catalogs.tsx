@@ -9,7 +9,7 @@ import { listCatalogCategories, listCatalogDepartments, updateCatalogCategory, u
 import { colors, radius, spacing } from '@/theme/tokens';
 
 export default function CatalogsScreen() {
-  const { role } = useSession();
+  const { databaseRole } = useSession();
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [departments, setDepartments] = useState<CatalogDepartment[]>([]);
   const [selected, setSelected] = useState<CatalogCategory | null>(null);
@@ -21,8 +21,8 @@ export default function CatalogsScreen() {
   const [message, setMessage] = useState('');
 
   const load = useCallback(async () => { setLoading(true); setError(''); const [categoryResult, departmentResult] = await Promise.allSettled([listCatalogCategories(), listCatalogDepartments()]); if (categoryResult.status === 'fulfilled') setCategories(categoryResult.value); else setError('No fue posible consultar las categorías.'); if (departmentResult.status === 'fulfilled') setDepartments(departmentResult.value); else setError('No fue posible consultar los departamentos.'); setLoading(false); }, []);
-  useEffect(() => { const timer = setTimeout(load, 0); return () => clearTimeout(timer); }, [load]);
-  if (role !== 'admin' && role !== 'superadmin') return <Redirect href="/(tabs)" />;
+  useEffect(() => { if (databaseRole !== 'administrador') return; const timer = setTimeout(load, 0); return () => clearTimeout(timer); }, [databaseRole, load]);
+  if (databaseRole !== 'administrador') return <Redirect href="/(tabs)" />;
 
   const openCategory = (item: CatalogCategory) => { setSelected(item); setSelectedDepartment(item.departmentId); setSelectedActive(item.active); setError(''); setMessage(''); };
   const saveCategory = async () => { if (!selected || !selectedDepartment || saving) return; try { setSaving(true); setError(''); await updateCatalogCategory(selected.id, selectedDepartment, selectedActive); setMessage('La categoría se actualizó correctamente.'); await load(); } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'No fue posible guardar la categoría.'); } finally { setSaving(false); } };

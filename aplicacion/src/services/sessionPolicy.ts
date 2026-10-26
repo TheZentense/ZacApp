@@ -2,11 +2,11 @@ import type { UserRole as DatabaseRole } from '@/types/domain';
 
 export type VisualRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 
-// Proposed responsibilities, pending team confirmation. Never derive permissions from a visual role.
+// Use the verified database role; visual roles only determine presentation.
 export function workflowPermissionsFor(databaseRole: unknown) {
   return {
-    generalReports: databaseRole === 'administrador',
-    departmentReports: databaseRole === 'mantenimiento',
+    generalReports: databaseRole === 'administrador' || databaseRole === 'supervisor',
+    departmentReports: ['coordinador', 'comunicacion', 'mantenimiento'].includes(String(databaseRole)),
     citizenReports: databaseRole === 'ciudadano',
     operator: databaseRole === 'operador'
   };

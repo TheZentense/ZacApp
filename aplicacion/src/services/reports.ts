@@ -4,6 +4,7 @@ import { readEvidenceBytes } from '@/services/evidenceImages';
 import { requireBackendCapability } from '@/lib/backendCapabilities';
 import { reportReadScopeFor } from '@/services/sessionPolicy';
 import * as Crypto from 'expo-crypto';
+import { guestReportProtectionEnabled } from '@/lib/guestReportSecurity';
 
 type CreateReportInput = {
   categoryId: number;
@@ -12,6 +13,7 @@ type CreateReportInput = {
   latitude: number;
   longitude: number;
   evidence: ReportEvidenceInput[];
+  turnstileToken?: string;
 };
 
 export type ReportEvidenceInput = {
@@ -28,6 +30,7 @@ export type ReportCategory = {
 
 export type ReportDepartment = { id: number; name: string };
 export type ReportAssignee = { id: string; fullName: string; role: string };
+export type ReporterContact = { name: string | null; email: string | null };
 
 export type ReportHistoryEntry = {
   id: number;
@@ -115,12 +118,14 @@ export async function listReportCategories(): Promise<ReportCategory[]> {
   return data ?? [];
 }
 
-export async function createReport({ categoryId, description, location, latitude, longitude, evidence }: CreateReportInput) {
+export async function createReport({ categoryId, description, location, latitude, longitude, evidence, turnstileToken }: CreateReportInput) {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) throw new Error('Inicia sesión para registrar un reporte.');
   const isGuest = authData.user.is_anonymous === true;
+  const verifyGuestReport = isGuest && guestReportProtectionEnabled();
+  if (verifyGuestReport && !turnstileToken?.trim()) throw new Error('Completa una verificación nueva para enviar este reporte.');
   const evidenceLimit = isGuest ? 3 : 5;
   if (evidence.length < 1 || evidence.length > evidenceLimit || evidence.some((item) => item.mimeType !== 'image/jpeg')) {
     if (isGuest) throw new Error('Como invitado puedes adjuntar entre una y tres fotografías JPEG.');
@@ -129,6 +134,16 @@ export async function createReport({ categoryId, description, location, latitude
 
   const incidentId = Crypto.randomUUID();
   const departmentCode = await categoryStorageCode(categoryId);
+  if (verifyGuestReport) {
+    try {
+      const verification = await supabase.functions.invoke('verify-guest-report', {
+        body: { incidentId, turnstileToken }
+      });
+      if (verification.error || verification.data?.ok !== true) throw new Error('Fresh challenge required');
+    } catch {
+      throw new Error('No fue posible verificar este envío. Completa una nueva verificación e inténtalo de nuevo.');
+    }
+  }
   const uploadedPaths: string[] = [];
   try {
     for (const [index, item] of evidence.entries()) {
@@ -245,8 +260,6 @@ type IncidentRow = {
   address_reference: string;
   latitude: number | null;
   longitude: number | null;
-  reporter_name: string | null;
-  reporter_email: string | null;
   status: IncidentStatus;
   created_at: string;
   updated_at: string;
@@ -333,7 +346,7 @@ export async function listReports(): Promise<Incident[]> {
   const { client, scope, userId, departmentId } = await requireReportReadAccess();
   let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, latitude, longitude, reporter_name, reporter_email, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
+    .select('id, code, title, description, address_reference, latitude, longitude, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
   if (scope === 'personal') query = query.eq('assigned_to', userId);
@@ -353,8 +366,6 @@ export async function listReports(): Promise<Incident[]> {
       status: incident.status,
       createdAt: formatDate(incident.created_at),
       updatedAt: formatDate(incident.updated_at),
-      citizenName: incident.reporter_name ?? 'Ciudadanía',
-      citizenEmail: incident.reporter_email ?? '',
       latitude: incident.latitude,
       longitude: incident.longitude,
       department: relationValue(incident.assignedDepartment)?.name ?? departmentForCategory(category),
@@ -365,6 +376,14 @@ export async function listReports(): Promise<Incident[]> {
       evidenceAttached: Boolean(incident.evidence?.length)
     };
   });
+}
+
+export async function getReporterContact(incidentId: string): Promise<ReporterContact | null> {
+  if (!supabase) throw new Error('Supabase no está configurado.');
+  const { data, error } = await supabase.rpc('get_incident_reporter_contact', { p_incident_id: incidentId });
+  if (error) throw error;
+  const row = (data as { reporter_name: string | null; reporter_email: string | null }[] | null)?.[0];
+  return row ? { name: row.reporter_name, email: row.reporter_email } : null;
 }
 
 export async function listDepartments(): Promise<ReportDepartment[]> {

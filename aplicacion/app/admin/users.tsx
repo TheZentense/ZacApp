@@ -17,7 +17,7 @@ const roles: { value: UserRole; label: string }[] = [
 ];
 
 export default function UsersScreen() {
-  const { role } = useSession();
+  const { databaseRole } = useSession();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [departments, setDepartments] = useState<ReportDepartment[]>([]);
   const [selected, setSelected] = useState<ManagedUser | null>(null);
@@ -38,9 +38,9 @@ export default function UsersScreen() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { const timer = setTimeout(load, 0); return () => clearTimeout(timer); }, [load]);
+  useEffect(() => { if (databaseRole !== 'administrador') return; const timer = setTimeout(load, 0); return () => clearTimeout(timer); }, [databaseRole, load]);
   const filteredUsers = useMemo(() => users.filter((item) => !search.trim() || item.fullName.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es'))), [search, users]);
-  if (role !== 'admin' && role !== 'superadmin') return <Redirect href="/(tabs)" />;
+  if (databaseRole !== 'administrador') return <Redirect href="/(tabs)" />;
 
   const openUser = (user: ManagedUser) => { setSelected(user); setSelectedRole(user.role); setSelectedStatus(user.status); setSelectedDepartment(user.departmentId); setError(''); setMessage(''); };
   const save = async () => {

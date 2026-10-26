@@ -52,6 +52,10 @@ export default function TrackingScreen() {
   const [evidenceError, setEvidenceError] = useState('');
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [detailOwner, setDetailOwner] = useState('');
+  const detailIdentityKey = JSON.stringify([userId, databaseRole, selected?.id]);
+  const visibleHistory = detailOwner === detailIdentityKey ? history : [];
+  const visibleEvidence = detailOwner === detailIdentityKey ? evidence : [];
   const categories = useMemo(() => ['Todas', ...new Set((isPreview ? [] : availableIncidents).map((item) => item.category))], [availableIncidents, isPreview]);
   const incidents = useMemo(() => availableIncidents.filter((item) => !isPreview && (category === 'Todas' || item.category === category)), [availableIncidents, category, isPreview]);
 
@@ -89,26 +93,28 @@ export default function TrackingScreen() {
   }, [selected?.id, userId, isAuthenticated]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || !isAuthenticated || !userId) return;
 
     let active = true;
     Promise.allSettled([listReportHistory(selected.id), listReportEvidence(selected.id)]).then(([historyResult, evidenceResult]) => {
       if (!active) return;
-      if (historyResult.status === 'fulfilled') setHistory(historyResult.value);
+      if (historyResult.status === 'fulfilled') { setHistory(historyResult.value); setHistoryError(''); }
       else { setHistory([]); setHistoryError('No fue posible consultar el historial.'); }
-      if (evidenceResult.status === 'fulfilled') setEvidence(evidenceResult.value);
+      if (evidenceResult.status === 'fulfilled') { setEvidence(evidenceResult.value); setEvidenceError(''); }
       else { setEvidence([]); setEvidenceError('No fue posible abrir las fotografías. Intenta actualizar la consulta.'); }
+      setDetailOwner(detailIdentityKey);
       setHistoryLoading(false);
       setEvidenceLoading(false);
     });
     return () => { active = false; };
-  }, [selected, revision]);
+  }, [detailIdentityKey, isAuthenticated, revision, selected, userId]);
 
   const selectIncident = (incident: Incident) => {
     setHistory([]);
     setHistoryError('');
     setHistoryLoading(true);
     setEvidence([]);
+    setDetailOwner('');
     setEvidenceError('');
     setEvidenceLoading(true);
     setSelected(incident);
@@ -120,6 +126,7 @@ export default function TrackingScreen() {
     setHistoryError('');
     setHistoryLoading(false);
     setEvidence([]);
+    setDetailOwner('');
     setEvidenceError('');
     setEvidenceLoading(false);
   };
@@ -144,14 +151,14 @@ export default function TrackingScreen() {
       })}</View>
       <View style={styles.historyCard}>
         <Text style={styles.historyTitle}>Evidencia fotográfica</Text>
-        {evidenceLoading ? <ActivityIndicator color={visual.primary} /> : evidenceError ? <Text style={styles.historyErrorText}>{evidenceError}</Text> : evidence.length ? <ScrollView horizontal contentContainerStyle={styles.filters}>{evidence.map((item) => <View key={item.id}><Image accessibilityLabel="Fotografía del reporte seleccionado" source={{ uri: item.url }} style={{ width: 280, height: 190, borderRadius: radius.md }} /><Text style={styles.historyMeta}>{item.createdAt}</Text></View>)}</ScrollView> : <Text style={styles.historyMuted}>Este reporte no tiene fotografías disponibles.</Text>}
+        {evidenceLoading ? <ActivityIndicator color={visual.primary} /> : evidenceError ? <Text style={styles.historyErrorText}>{evidenceError}</Text> : visibleEvidence.length ? <ScrollView horizontal contentContainerStyle={styles.filters}>{visibleEvidence.map((item) => <View key={item.id}><Image accessibilityLabel="Fotografía del reporte seleccionado" source={{ uri: item.url }} style={{ width: 280, height: 190, borderRadius: radius.md }} /><Text style={styles.historyMeta}>{item.createdAt}</Text></View>)}</ScrollView> : <Text style={styles.historyMuted}>Este reporte no tiene fotografías disponibles.</Text>}
         <Pressable accessibilityRole="button" onPress={() => { setHistoryLoading(true); setEvidenceLoading(true); setHistoryError(''); setEvidenceError(''); setRevision((value) => value + 1); }}><Text style={styles.backText}>Actualizar historial y fotografías</Text></Pressable>
       </View>
       <View style={styles.historyCard}>
         <View style={styles.historyHeader}><View><Text style={styles.historyKicker}>TRAZABILIDAD REAL</Text><Text style={styles.historyTitle}>Historial</Text></View><Ionicons name="time-outline" size={23} color={visual.primary} /></View>
         {historyLoading ? <View style={styles.historyLoading}><ActivityIndicator color={visual.primary} /><Text style={styles.historyMuted}>Consultando movimientos...</Text></View> : historyError ? <View style={styles.historyError}><Ionicons name="alert-circle-outline" size={18} color={colors.danger} /><Text style={styles.historyErrorText}>{historyError}</Text></View> : <View style={styles.historyList}>
           <View style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>Reporte registrado</Text><Text style={styles.historyMeta}>{selected.createdAt} · Ciudadanía</Text></View></View>
-          {history.map((entry) => <View key={entry.id} style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: entry.newStatus === 'CERRADO' ? colors.accent : visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>{entry.previousStatus ? `${historyStatusLabels[entry.previousStatus]} → ` : ''}{historyStatusLabels[entry.newStatus]}</Text><Text style={styles.historyMeta}>{entry.createdAt} · {entry.changedBy}</Text>{entry.assignedTo ? <Text style={styles.historyMeta}>Responsable: {entry.assignedTo}</Text> : null}{entry.note ? <Text style={styles.historyNote}>{entry.note}</Text> : null}</View></View>)}
+          {visibleHistory.map((entry) => <View key={entry.id} style={styles.historyItem}><View style={[styles.historyDot, { backgroundColor: entry.newStatus === 'CERRADO' ? colors.accent : visual.primary }]} /><View style={styles.historyBody}><Text style={styles.historyState}>{entry.previousStatus ? `${historyStatusLabels[entry.previousStatus]} → ` : ''}{historyStatusLabels[entry.newStatus]}</Text><Text style={styles.historyMeta}>{entry.createdAt} · {entry.changedBy}</Text>{entry.assignedTo ? <Text style={styles.historyMeta}>Responsable: {entry.assignedTo}</Text> : null}{entry.note ? <Text style={styles.historyNote}>{entry.note}</Text> : null}</View></View>)}
         </View>}
       </View>
     </> : <>

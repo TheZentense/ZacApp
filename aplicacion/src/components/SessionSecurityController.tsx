@@ -38,7 +38,7 @@ export function SessionSecurityController() {
   }, [closeExpiredSession]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || isLoading || !isAuthenticated || isGuest) return;
+    if (Platform.OS === 'web' || (Platform.OS === 'android' && !isGuest) || isLoading || !isAuthenticated || isGuest) return;
 
     void verifyBackgroundTime();
     const subscription = AppState.addEventListener('change', (nextState) => {
