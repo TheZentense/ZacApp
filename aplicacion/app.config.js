@@ -3,7 +3,7 @@
 module.exports = ({ config }) => {
   if (process.env.ZACAPP_BUILD_VARIANT !== 'biometric-test') return config;
 
-  const expectedHost = 'supabasekong-zkh1ndvdzgbhadhdf8xgvtxr.77.237.246.163.sslip.io';
+  const expectedHost = 'zacapp-api.freeddns.org';
   let endpoint;
   try { endpoint = new URL(process.env.EXPO_PUBLIC_SUPABASE_URL || ''); }
   catch { throw new Error('biometric-test necesita la URL pública del Supabase del VPS.'); }

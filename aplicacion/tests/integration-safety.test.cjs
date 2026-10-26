@@ -2145,7 +2145,7 @@ test('biometric APK stays separate and refuses an unverified Supabase or enabled
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'public-anon-key';
     process.env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED = 'false';
     assert.throws(() => appConfig({ config: base }), /Supabase distinto/);
-    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://supabasekong-zkh1ndvdzgbhadhdf8xgvtxr.77.237.246.163.sslip.io';
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://zacapp-api.freeddns.org';
     delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
     assert.throws(() => appConfig({ config: base }), /clave anon pública/);
     process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'public-anon-key';

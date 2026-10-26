@@ -29,7 +29,7 @@ compilación. Las comprobaciones locales no validan una APK instalada.
 
 - Confirmar en **Expo → proyecto ZacApp → Environment variables → preview** que
   `EXPO_PUBLIC_SUPABASE_URL` corresponde al host
-  `supabasekong-zkh1ndvdzgbhadhdf8xgvtxr.77.237.246.163.sslip.io` y que
+  `zacapp-api.freeddns.org` y que
   `EXPO_PUBLIC_SUPABASE_ANON_KEY` existe y pertenece a ese mismo Supabase.
   Verificarlo en la sesión propia de Expo; no pegar claves en el chat.
   `app.config.js` interrumpe esta variante si el host no coincide, si falta la
