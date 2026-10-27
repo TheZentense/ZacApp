@@ -259,6 +259,104 @@ test('reporter contact uses a separate administrator-gated RPC', async () => {
   assert.ok(!calls.some((call) => call.table === 'incidents'));
 });
 
+test('disabled user and catalog administration rejects writes even for an active administrator', async () => {
+  const { client, calls } = clientDouble((query) => {
+    assert.equal(query.operation, 'select');
+    if (query.table === 'profiles' && query.fields === 'role, status') return { data: { role: 'administrador', status: 'ACTIVO' }, error: null };
+    if (query.table === 'profiles') return { data: [{ id: 'worker', full_name: 'Personal', role: 'operador', status: 'ACTIVO', department_id: 7, created_at: '2026-10-15T12:00:00Z', department: { name: 'Agua' } }], error: null };
+    if (query.table === 'departments') return { data: [{ id: 7, name: 'Agua', code: 'AGUA', active: true }], error: null };
+    if (query.table === 'categories') return { data: [{ id: 2, name: 'Fuga', active: true, department_id: 7, department: { name: 'Agua' } }], error: null };
+    assert.fail(`Unexpected table: ${query.table}`);
+  });
+  const overrides = { '@/lib/supabase': { supabase: client } };
+  const users = loader(overrides)('src/services/users.ts');
+  const catalogs = loader(overrides)('src/services/catalogs.ts');
+  assert.equal((await users.listManagedUsers())[0].fullName, 'Personal');
+  assert.equal((await catalogs.listCatalogDepartments())[0].name, 'Agua');
+  assert.equal((await catalogs.listCatalogCategories())[0].name, 'Fuga');
+  assert.equal(await loader(overrides)('src/services/administration.ts').requireAdministrator(), client);
+  const readCount = calls.length;
+  await assert.rejects(users.updateManagedUser({ id: 'worker', role: 'operador', status: 'INACTIVO', departmentId: 7 }), /Pendiente de habilitación segura/);
+  await assert.rejects(catalogs.updateCatalogCategory(2, 7, false), /Pendiente de habilitación segura/);
+  await assert.rejects(catalogs.updateCatalogDepartment(7, false), /Pendiente de habilitación segura/);
+  assert.equal(calls.length, readCount);
+});
+
+test('enabled administration still uses authenticated updates and propagates server RLS denials', async () => {
+  const checked = [];
+  let actorProfile = { role: 'administrador', status: 'ACTIVO' };
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'profiles' && query.fields === 'role, status') {
+      assert.equal(query.single, true);
+      assert.equal(query.filters.length, 1);
+      assert.ok(query.filters.some(([key, value]) => key === 'id' && value === 'owner'));
+      return { data: actorProfile, error: null };
+    }
+    assert.equal(query.operation, 'update');
+    return { data: null, error: new Error('RLS denied update') };
+  });
+  const overrides = {
+    '@/lib/supabase': { supabase: client },
+    '@/lib/backendCapabilities': { requireBackendCapability: (capability) => checked.push(capability) }
+  };
+  const users = loader(overrides)('src/services/users.ts');
+  const catalogs = loader(overrides)('src/services/catalogs.ts');
+  await assert.rejects(users.updateManagedUser({ id: 'worker', role: 'operador', status: 'INACTIVO', departmentId: 7 }), /RLS denied update/);
+  await assert.rejects(catalogs.updateCatalogCategory(2, 7, false), /RLS denied update/);
+  await assert.rejects(catalogs.updateCatalogDepartment(7, false), /RLS denied update/);
+  assert.deepEqual(checked, ['userAdministration', 'catalogAdministration', 'catalogAdministration']);
+  assert.deepEqual(calls.filter((call) => call.operation === 'update').map((call) => call.table), ['profiles', 'categories', 'departments']);
+  assert.equal(calls.filter((call) => call.table === 'profiles' && call.fields === 'role, status').length, 3);
+  actorProfile = { role: 'ciudadano', status: 'ACTIVO' };
+  calls.length = 0;
+  await assert.rejects(users.updateManagedUser({ id: 'worker', role: 'operador', status: 'INACTIVO', departmentId: 7 }), /perfil administrativo verificado/);
+  await assert.rejects(catalogs.updateCatalogCategory(2, 7, false), /perfil administrativo verificado/);
+  assert.ok(!calls.some((call) => call.operation === 'update'));
+});
+
+test('inactive administrator and unavailable profiles cannot reach administration updates', async () => {
+  for (const scenario of [
+    { name: 'inactive', data: { role: 'administrador', status: 'INACTIVO' }, error: null },
+    { name: 'missing', data: null, error: null },
+    { name: 'query failed', data: null, error: new Error('Profile lookup denied') }
+  ]) {
+    const { client, calls } = clientDouble((query) => {
+      assert.equal(query.table, 'profiles', scenario.name);
+      assert.equal(query.fields, 'role, status', scenario.name);
+      assert.equal(query.operation, 'select', scenario.name);
+      assert.ok(query.filters.some(([key, value]) => key === 'id' && value === 'owner'), scenario.name);
+      return { data: scenario.data, error: scenario.error };
+    });
+    const overrides = {
+      '@/lib/supabase': { supabase: client },
+      '@/lib/backendCapabilities': { requireBackendCapability: () => {} }
+    };
+    const users = loader(overrides)('src/services/users.ts');
+    const catalogs = loader(overrides)('src/services/catalogs.ts');
+    await assert.rejects(users.updateManagedUser({ id: 'worker', role: 'operador', status: 'INACTIVO', departmentId: 7 }), /perfil administrativo verificado/, scenario.name);
+    await assert.rejects(catalogs.updateCatalogCategory(2, 7, false), /perfil administrativo verificado/, scenario.name);
+    await assert.rejects(catalogs.updateCatalogDepartment(7, false), /perfil administrativo verificado/, scenario.name);
+    assert.ok(!calls.some((call) => call.operation === 'update'), scenario.name);
+  }
+});
+
+test('administration rejects an invalid session before querying a profile or updating data', async () => {
+  for (const authResult of [
+    { data: { user: null }, error: null },
+    { data: { user: null }, error: new Error('Session expired') }
+  ]) {
+    const { client, calls } = clientDouble(() => assert.fail('No profile query is allowed without a valid session'), {
+      auth: { getUser: async () => authResult }
+    });
+    const users = loader({
+      '@/lib/supabase': { supabase: client },
+      '@/lib/backendCapabilities': { requireBackendCapability: () => {} }
+    })('src/services/users.ts');
+    await assert.rejects(users.updateManagedUser({ id: 'worker', role: 'operador', status: 'INACTIVO', departmentId: 7 }), /Inicia sesión nuevamente/);
+    assert.ok(!calls.some((call) => call.table || call.operation === 'update'));
+  }
+});
+
 test('operator cannot read another assignee history or photos even in the same department', async () => {
   for (const userId of ['operator-a', 'operator-b']) {
     const { client, calls } = clientDouble((query) => {
@@ -394,6 +492,66 @@ test('assignment rejects a concurrent change without attempting a direct update'
     assignedToId: 'employee-7', priority: 'MEDIA', note: 'Asignar trabajo'
   }), /cambió desde otra sesión/);
   assert.ok(!calls.some((call) => ['update', 'insert'].includes(call.operation)));
+});
+
+function administrationScreenHarness(file, databaseRole, initialSlots, writes) {
+  const slots = [];
+  let index = 0;
+  const jsx = (type, props) => ({ type, props });
+  const components = Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'ScrollView'].map((name) => [name, name]));
+  const screen = loader({
+    react: {
+      useState(initial) { const slot = index++; if (!(slot in slots)) slots[slot] = initialSlots.has(slot) ? initialSlots.get(slot) : initial; return [slots[slot], (value) => { slots[slot] = typeof value === 'function' ? value(slots[slot]) : value; }]; },
+      useCallback: (callback) => callback, useMemo: (callback) => callback(), useEffect() {}
+    },
+    'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
+    'react-native': { ...components, StyleSheet: { create: (value) => value } },
+    'expo-router': { Redirect: 'Redirect', router: { back() {} } },
+    '@expo/vector-icons': { Ionicons: 'Ionicons' },
+    '@/components/AppButton': { AppButton: 'AppButton' },
+    '@/components/DataState': { LoadingState: 'LoadingState', ErrorState: 'ErrorState' },
+    '@/context/SessionContext': { useSession: () => ({ databaseRole }) },
+    '@/services/reports': { listDepartments: async () => [] },
+    '@/services/users': { listManagedUsers: async () => [], updateManagedUser: async () => { writes.push('users'); } },
+    '@/services/catalogs': { listCatalogCategories: async () => [], listCatalogDepartments: async () => [], updateCatalogCategory: async () => { writes.push('category'); }, updateCatalogDepartment: async () => { writes.push('department'); } }
+  })(file).default;
+  return { render() { index = 0; return screen(); } };
+}
+
+test('administration screens keep lists readable but disable every editing control', async () => {
+  const writes = [];
+  const user = { id: 'worker', fullName: 'Personal', role: 'operador', status: 'ACTIVO', departmentId: 7, departmentName: 'Agua', createdAt: '15 oct 2026' };
+  const department = { id: 7, name: 'Agua', code: 'AGUA', active: true };
+  const category = { id: 2, name: 'Fuga', active: true, departmentId: 7, departmentName: 'Agua' };
+  const usersList = administrationScreenHarness('app/admin/users.tsx', 'administrador', new Map([[0, [user]], [1, [department]], [7, false]]), writes).render();
+  assert.ok(nodes(usersList).some((node) => node.props?.children === 'Personal'));
+  const userEditor = administrationScreenHarness('app/admin/users.tsx', 'administrador', new Map([[0, [user]], [1, [department]], [2, user], [3, 'operador'], [5, 7], [7, false]]), writes).render();
+  assert.ok(nodes(userEditor).some((node) => String(node.props?.children).includes('Pendiente de habilitación segura')));
+  const saveUser = nodes(userEditor).find((node) => node.type === 'AppButton' && node.props.label === 'Guardar cambios');
+  assert.equal(saveUser.props.disabled, true);
+  for (const label of ['Ciudadano', 'Operador', 'Agua', 'Activo', 'Inactivo']) {
+    const option = nodes(userEditor).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === label));
+    assert.equal(option.props.disabled, true, label);
+  }
+  await saveUser.props.onPress();
+
+  const catalogList = administrationScreenHarness('app/admin/catalogs.tsx', 'administrador', new Map([[0, [category]], [1, [department]], [5, false]]), writes).render();
+  assert.ok(nodes(catalogList).some((node) => node.props?.children === 'Fuga'));
+  const toggle = nodes(catalogList).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.type === 'Ionicons' && child.props.name === 'pause-outline'));
+  assert.equal(toggle.props.disabled, true);
+  await toggle.props.onPress();
+  const categoryEditor = administrationScreenHarness('app/admin/catalogs.tsx', 'administrador', new Map([[0, [category]], [1, [department]], [2, category], [3, 7], [5, false]]), writes).render();
+  assert.ok(nodes(categoryEditor).some((node) => String(node.props?.children).includes('Pendiente de habilitación segura')));
+  const saveCategory = nodes(categoryEditor).find((node) => node.type === 'AppButton' && node.props.label === 'Guardar categoría');
+  assert.equal(saveCategory.props.disabled, true);
+  for (const label of ['Agua', 'Activa', 'Inactiva']) {
+    const option = nodes(categoryEditor).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === label));
+    assert.equal(option.props.disabled, true, label);
+  }
+  await saveCategory.props.onPress();
+  assert.deepEqual(writes, []);
+  assert.equal(administrationScreenHarness('app/admin/users.tsx', 'supervisor', new Map(), writes).render().type, 'Redirect');
+  assert.equal(administrationScreenHarness('app/admin/catalogs.tsx', 'supervisor', new Map(), writes).render().type, 'Redirect');
 });
 
 function workflowScreenHarness(databaseRole, incidents = [], visualRole, { isLoading = false, error = '', isPreview = false, width = 390 } = {}) {

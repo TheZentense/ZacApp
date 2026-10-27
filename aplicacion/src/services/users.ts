@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { requireBackendCapability } from '@/lib/backendCapabilities';
+import { requireAdministrator } from '@/services/administration';
 import type { UserRole } from '@/types/domain';
 
 export type ManagedUser = {
@@ -37,10 +39,11 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
 }
 
 export async function updateManagedUser(input: { id: string; role: UserRole; status: 'ACTIVO' | 'INACTIVO'; departmentId: number | null }) {
-  if (!supabase) throw new Error('Supabase no está configurado.');
+  requireBackendCapability('userAdministration');
+  const client = await requireAdministrator();
   if (input.role === 'administrador') throw new Error('Las cuentas administrativas requieren el flujo de Superadministración.');
   const requiresDepartment = ['operador', 'coordinador', 'mantenimiento', 'comunicacion'].includes(input.role);
   if (requiresDepartment && !input.departmentId) throw new Error('Selecciona un departamento para este rol.');
-  const { error } = await supabase.from('profiles').update({ role: input.role, status: input.status, department_id: requiresDepartment ? input.departmentId : null }).eq('id', input.id);
+  const { error } = await client.from('profiles').update({ role: input.role, status: input.status, department_id: requiresDepartment ? input.departmentId : null }).eq('id', input.id);
   if (error) throw error;
 }
