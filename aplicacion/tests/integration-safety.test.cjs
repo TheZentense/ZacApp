@@ -50,6 +50,7 @@ function clientDouble(resolveQuery = () => ({ data: [], error: null }), options 
       const chain = {
         select(fields) { query.fields = fields; return this; },
         eq(key, value) { query.filters.push([key, value]); return this; },
+        or(value) { query.filters.push(['or', value]); return this; },
         neq(key, value) { query.filters.push([key, value]); return this; },
         order() { return this; },
         single() { query.single = true; return this; },
@@ -286,11 +287,62 @@ test('every database role reads its authorized rows without requesting reporter 
     assert.equal(queries.length, 1);
     for (const query of queries) {
       assert.doesNotMatch(query.fields, /reporter_name|reporter_email/);
-      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'operador' ? ['assigned_to', 'owner'] : ['mantenimiento', 'coordinador', 'comunicacion'].includes(role) ? ['assigned_department_id', 7] : null;
+      const expected = role === 'ciudadano' ? ['citizen_id', 'owner'] : role === 'operador' ? ['assigned_to', 'owner'] : ['mantenimiento', 'coordinador', 'comunicacion'].includes(role) ? ['or', 'assigned_department_id.eq.7,assigned_department_id.is.null'] : null;
       if (expected) assert.ok(query.filters.some(([key, value]) => key === expected[0] && value === expected[1]));
       else assert.equal(query.filters.length, 0);
     }
   }
+});
+
+test('department lists combine assigned and unassigned incidents under the category-aware RLS policy', async () => {
+  const rows = [
+    { ...reportsFixture('MEDIA'), id: 'new-local', assigned_department_id: null, category_department_id: 7, category: { name: 'Agua', department: { name: 'Agua' } } },
+    { ...reportsFixture('MEDIA'), id: 'new-foreign', assigned_department_id: null, category_department_id: 8, category: { name: 'Drenajes', department: { name: 'Drenajes' } } },
+    { ...reportsFixture('MEDIA'), id: 'assigned-local', assigned_department_id: 7, category_department_id: 8, assignedDepartment: { name: 'Agua' } },
+    { ...reportsFixture('MEDIA'), id: 'transferred-away', assigned_department_id: 8, category_department_id: 7, assignedDepartment: { name: 'Drenajes' } }
+  ];
+  const { client, calls } = clientDouble((query) => {
+    assert.equal(query.table, 'incidents');
+    assert.deepEqual(query.filters, [['or', 'assigned_department_id.eq.7,assigned_department_id.is.null']]);
+    // The double models active-category RLS results; inactive categories need a real PostgreSQL/RLS test.
+    return { data: rows.filter((row) => (row.assigned_department_id ?? row.category_department_id) === 7), error: null };
+  }, { profile: { role: 'mantenimiento', department_id: 7 } });
+  const result = await reportsWithPhotos(client).listReports();
+  assert.deepEqual(Array.from(result, (row) => row.id), ['new-local', 'assigned-local']);
+  assert.equal(result[0].departmentId, null);
+  assert.equal(result[1].departmentId, 7);
+  assert.equal(calls.filter((call) => call.table === 'incidents').length, 1);
+  assert.ok(!calls.some((call) => call.table === 'categories'));
+});
+
+test('department history and photos use the same scoped incident check as the list', async () => {
+  const visibility = new Map([
+    ['new-local', { assigned: null, category: 7 }],
+    ['new-foreign', { assigned: null, category: 8 }],
+    ['assigned-local', { assigned: 7, category: 8 }],
+    ['transferred-away', { assigned: 8, category: 7 }]
+  ]);
+  const { client, calls } = clientDouble((query) => {
+    if (query.table === 'incidents') {
+      assert.ok(query.filters.some(([key, value]) => key === 'or' && value === 'assigned_department_id.eq.7,assigned_department_id.is.null'));
+      const id = query.filters.find(([key]) => key === 'id')?.[1];
+      const row = visibility.get(id);
+      return { data: row && (row.assigned ?? row.category) === 7 ? { id } : null, error: null };
+    }
+    assert.ok(['incident_history', 'incident_evidence'].includes(query.table));
+    return { data: [], error: null };
+  }, { profile: { role: 'coordinador', department_id: 7 } });
+  const reports = reportsWithPhotos(client);
+  for (const id of ['new-local', 'assigned-local']) {
+    assert.deepEqual(Array.from(await reports.listReportHistory(id)), []);
+    assert.deepEqual(Array.from(await reports.listReportEvidence(id)), []);
+  }
+  const allowedDetailReads = calls.filter((call) => ['incident_history', 'incident_evidence'].includes(call.table)).length;
+  for (const id of ['new-foreign', 'transferred-away']) {
+    await assert.rejects(reports.listReportHistory(id), /no está disponible/);
+    await assert.rejects(reports.listReportEvidence(id), /no está disponible/);
+  }
+  assert.equal(calls.filter((call) => ['incident_history', 'incident_evidence'].includes(call.table)).length, allowedDetailReads);
 });
 
 test('unverified profiles or missing departments never fall back to a general report query', async () => {
@@ -532,6 +584,8 @@ test('Realtime reloads authorized report lists, scopes workers and removes old-s
   let focus;
   let reads = 0;
   let foreground;
+  let fallback;
+  let departmentRows = [{ id: 'new-local' }];
   const removed = [];
   const client = {
     channel(name) {
@@ -554,8 +608,8 @@ test('Realtime reloads authorized report lists, scopes workers and removes old-s
     'expo-router': { useFocusEffect: (callback) => { focus = callback; } },
     '@/lib/supabase': { isSupabaseConfigured: true, supabase: client },
     '@/context/SessionContext': { useSession: () => identity },
-    '@/services/reports': { listReports: async () => { reads++; return [{ id: identity.userId }]; } }
-  }, { setInterval: () => 1, clearInterval: () => {} })('src/hooks/useReports.ts').useReports;
+    '@/services/reports': { listReports: async () => { reads++; return identity.databaseRole === 'mantenimiento' ? departmentRows : [{ id: identity.userId }]; } }
+  }, { setInterval: (listener) => { fallback = listener; return 1; }, clearInterval: () => {} })('src/hooks/useReports.ts').useReports;
   const render = () => { index = 0; return hook(); };
   render(); const blurAdmin = focus(); await new Promise(setImmediate);
   assert.equal(channels[0].bindings[0].config.filter, undefined);
@@ -580,6 +634,33 @@ test('Realtime reloads authorized report lists, scopes workers and removes old-s
   assert.equal(render().incidents[0].id, 'worker-b');
   blurWorker();
   assert.deepEqual(removed, channels);
+
+  identity = { userId: 'department-c', databaseRole: 'mantenimiento', departmentId: 7, isAuthenticated: true };
+  assert.equal(render().incidents.length, 0);
+  const blurDepartment = focus(); await new Promise(setImmediate);
+  assert.equal(channels[2].bindings[0].config.filter, undefined);
+  assert.ok(channels[2].bindings.every((binding) => binding.config.filter === undefined));
+  assert.deepEqual(Array.from(render().incidents, (row) => row.id), ['new-local']);
+  channels[2].status('SUBSCRIBED'); await new Promise(setImmediate);
+  // A manual callback tests reconciliation, not which events live Realtime/RLS delivers.
+  channels[2].bindings[0].listener({ new: { id: 'foreign-report' } }); await new Promise(setImmediate);
+  assert.deepEqual(Array.from(render().incidents, (row) => row.id), ['new-local']);
+  departmentRows = [];
+  fallback(); await new Promise(setImmediate);
+  assert.deepEqual(Array.from(render().incidents, (row) => row.id), []);
+  blurDepartment();
+  assert.deepEqual(removed, channels);
+
+  identity = { userId: 'invalid-department', databaseRole: 'mantenimiento', departmentId: 0, isAuthenticated: true };
+  render(); const channelCount = channels.length;
+  const blurInvalid = focus(); await new Promise(setImmediate);
+  assert.equal(channels.length, channelCount);
+  blurInvalid();
+
+  identity = { userId: 'citizen-d', databaseRole: 'ciudadano', departmentId: null, isAuthenticated: true };
+  render(); const blurCitizen = focus(); await new Promise(setImmediate);
+  assert.equal(channels.at(-1).bindings[0].config.filter, 'citizen_id=eq.citizen-d');
+  blurCitizen();
 });
 
 test('real report reads retain schema priorities and normalize missing or invalid values', async () => {
@@ -848,7 +929,7 @@ test('incident visibility restrictions finish before reading evidence or signing
     const query = calls.find((call) => call.table === 'incidents');
     assert.ok(query.filters.some(([key, value]) => key === 'id' && value === evidenceIncidentId));
     if (role === 'ciudadano') assert.ok(query.filters.some(([key, value]) => key === 'citizen_id' && value === 'owner'));
-    if (role === 'mantenimiento') assert.ok(query.filters.some(([key, value]) => key === 'assigned_department_id' && value === 7));
+    if (role === 'mantenimiento') assert.ok(query.filters.some(([key, value]) => key === 'or' && value === 'assigned_department_id.eq.7,assigned_department_id.is.null'));
     assert.ok(!calls.some((call) => call.table === 'incident_evidence' || call.operation === 'sign'));
     visibility.resolve({ data: null, error: null });
     await rejected;
@@ -1393,6 +1474,14 @@ test('operator RLS migration isolates tasks, history, evidence and transitions b
   assert.match(sql, /incident_row\.assigned_to is distinct from actor_id/);
   assert.match(sql, /users read permitted incident evidence/);
   assert.doesNotMatch(sql, /current_user_role\(\) <> 'ciudadano'/);
+});
+
+test('department visibility depends on the existing category-aware incident RLS policy', () => {
+  const incidents = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/202610170002_enable_operator_personal_tasks.sql'), 'utf8');
+  const catalogs = fs.readFileSync(path.resolve(__dirname, '..', 'supabase/migrations/202610160001_reconcile_live_schema.sql'), 'utf8');
+  assert.match(incidents, /coalesce\(i\.assigned_department_id, c\.department_id\) = p\.department_id/);
+  assert.match(incidents, /coalesce\(\s*assigned_department_id,\s*\(select c\.department_id from public\.categories c where c\.id = category_id\)\s*\) = \(select private\.current_department_id\(\)\)/);
+  assert.match(catalogs, /categories readable by authenticated users"[\s\S]*?using \(active = true and \(select private\.current_user_is_active\(\)\)\)/);
 });
 
 test('prepared profile and contact migration restricts coordinator rows and reporter columns', () => {

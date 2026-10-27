@@ -321,11 +321,17 @@ async function requireReportReadAccess() {
   return { client: supabase, scope, userId: auth.user.id, departmentId: departmentId as number | null };
 }
 
+function departmentReportFilter(departmentId: number) {
+  // Incident SELECT RLS determines which unassigned categories this department
+  // may read; inactive-category visibility still needs a live PostgreSQL check.
+  return `assigned_department_id.eq.${departmentId},assigned_department_id.is.null`;
+}
+
 async function requireVisibleReport(incidentId: string) {
   const { client, scope, userId, departmentId } = await requireReportReadAccess();
   let query = client.from('incidents').select('id').eq('id', incidentId);
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
-  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  if (scope === 'department') query = query.or(departmentReportFilter(departmentId as number));
   if (scope === 'personal') query = query.eq('assigned_to', userId);
   const { data, error } = await query.single();
   if (error || !data) throw new Error('El reporte no está disponible para esta sesión.');
@@ -338,7 +344,7 @@ export async function listReports(): Promise<Incident[]> {
     .from('incidents')
     .select('id, code, title, description, address_reference, latitude, longitude, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name, department:departments(name)), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
-  if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
+  if (scope === 'department') query = query.or(departmentReportFilter(departmentId as number));
   if (scope === 'personal') query = query.eq('assigned_to', userId);
   const { data, error } = await query.order('created_at', { ascending: false });
 

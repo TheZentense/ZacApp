@@ -52,11 +52,14 @@ export function useReports() {
     setIncidents(isSupabaseConfigured ? [] : mockIncidents);
     void loadReports();
     const scope = reportReadScopeFor(databaseRole);
+    const validDepartment = typeof departmentId === 'number' && Number.isSafeInteger(departmentId) && departmentId > 0;
     const filter = scope === 'citizen' ? `citizen_id=eq.${userId}`
-      : scope === 'personal' ? `assigned_to=eq.${userId}`
-      : scope === 'department' ? `assigned_department_id=eq.${departmentId}` : undefined;
+      : scope === 'personal' ? `assigned_to=eq.${userId}` : undefined;
     const refresh = () => { if (active) void loadReports(); };
-    const channel = supabase && isAuthenticated && userId && scope !== 'pending' && (scope !== 'department' || departmentId)
+    // Department subscribers need both assigned and unassigned changes. The
+    // incidents SELECT RLS policy limits delivered events to their department.
+    // Verify actual event isolation against the deployed Realtime/RLS setup.
+    const channel = supabase && isAuthenticated && userId && scope !== 'pending' && (scope !== 'department' || validDepartment)
       ? supabase.channel(`report-list-${++channelSequence}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'incidents', ...(filter ? { filter } : {}) }, refresh)
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'incidents', ...(filter ? { filter } : {}) }, refresh)
