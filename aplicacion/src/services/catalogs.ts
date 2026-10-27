@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { requireBackendCapability } from '@/lib/backendCapabilities';
+import { requireAdministrator } from '@/services/administration';
 
 export type CatalogDepartment = { id: number; name: string; code: string; active: boolean };
 export type CatalogCategory = { id: number; name: string; active: boolean; departmentId: number; departmentName: string };
@@ -21,13 +23,15 @@ export async function listCatalogCategories(): Promise<CatalogCategory[]> {
 }
 
 export async function updateCatalogCategory(id: number, departmentId: number, active: boolean) {
-  if (!supabase) throw new Error('Supabase no está configurado.');
-  const { error } = await supabase.from('categories').update({ department_id: departmentId, active }).eq('id', id);
+  requireBackendCapability('catalogAdministration');
+  const client = await requireAdministrator();
+  const { error } = await client.from('categories').update({ department_id: departmentId, active }).eq('id', id);
   if (error) throw error;
 }
 
 export async function updateCatalogDepartment(id: number, active: boolean) {
-  if (!supabase) throw new Error('Supabase no está configurado.');
-  const { error } = await supabase.from('departments').update({ active }).eq('id', id);
+  requireBackendCapability('catalogAdministration');
+  const client = await requireAdministrator();
+  const { error } = await client.from('departments').update({ active }).eq('id', id);
   if (error) throw error;
 }
