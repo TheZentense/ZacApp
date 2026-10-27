@@ -595,6 +595,60 @@ test('real report reads retain schema priorities and normalize missing or invali
   assert.ok(!calls.some((query) => /difficulty|file_url|file_type/.test(query.fields ?? '')));
 });
 
+test('unassigned reports use the current category department without inventing an assignment', async () => {
+  for (const departmentName of ['Agua', 'Infraestructura']) {
+    const row = {
+      ...reportsFixture('MEDIA'),
+      assigned_department_id: null,
+      assignedDepartment: null,
+      category: { name: 'Agua potable', department: { name: departmentName } }
+    };
+    const { client, calls } = clientDouble(() => ({ data: [row], error: null }));
+    const [report] = await reportsWithPhotos(client).listReports();
+    assert.equal(report.department, departmentName);
+    assert.equal(report.departmentId, null);
+    assert.equal(report.category, 'Agua potable');
+    assert.ok(calls.find((call) => call.table === 'incidents').fields.includes('category:categories(name, department:departments(name))'));
+  }
+});
+
+test('assigned department takes precedence over the category relation', async () => {
+  const row = {
+    ...reportsFixture('ALTA'),
+    assigned_department_id: 9,
+    assignedDepartment: [{ name: 'EEMZA' }],
+    category: [{ name: 'Agua potable', department: [{ name: 'Infraestructura' }] }]
+  };
+  const { client } = clientDouble(() => ({ data: [row], error: null }));
+  const [report] = await reportsWithPhotos(client).listReports();
+  assert.equal(report.department, 'EEMZA');
+  assert.equal(report.departmentId, 9);
+});
+
+test('missing department relations remain neutral for assigned and unassigned reports', async () => {
+  for (const row of [
+    { ...reportsFixture('MEDIA'), assigned_department_id: null, assignedDepartment: null, category: { name: 'Agua potable', department: null } },
+    { ...reportsFixture('MEDIA'), assigned_department_id: null, assignedDepartment: null, category: null },
+    { ...reportsFixture('MEDIA'), assigned_department_id: 9, assignedDepartment: null, category: { name: 'Agua potable', department: { name: 'Agua' } } }
+  ]) {
+    const { client } = clientDouble(() => ({ data: [row], error: null }));
+    const [report] = await reportsWithPhotos(client).listReports();
+    assert.equal(report.department, 'Sin departamento');
+    assert.equal(report.departmentId, row.assigned_department_id);
+  }
+
+  const arrayRow = {
+    ...reportsFixture('MEDIA'),
+    assigned_department_id: null,
+    assignedDepartment: null,
+    category: [{ name: 'Drenajes', department: [{ name: 'Drenajes' }] }]
+  };
+  const { client } = clientDouble(() => ({ data: [arrayRow], error: null }));
+  const [report] = await reportsWithPhotos(client).listReports();
+  assert.equal(report.department, 'Drenajes');
+  assert.equal(report.departmentId, null);
+});
+
 test('only verified optional backend entry points are enabled', () => {
   const capabilities = loader()('src/lib/backendCapabilities.ts');
   assert.doesNotThrow(() => capabilities.requireBackendCapability('staffEvidence'));
