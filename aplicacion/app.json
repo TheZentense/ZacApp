@@ -17,8 +17,8 @@
     "android": {
       "package": "gt.edu.zacapp",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/zacapp-logo-dark.png",
-        "backgroundColor": "#F2F7EE"
+        "foregroundImage": "./assets/images/zacapp-adaptive-safe.png",
+        "backgroundColor": "#183B21"
       },
       "permissions": [
         "android.permission.CAMERA",

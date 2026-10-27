@@ -48,6 +48,7 @@ export default function AdminMenuScreen() {
   const visual = roleVisuals[role];
   const visibleFunctions = databaseRole === 'administrador' ? functions : databaseRole === 'supervisor' ? supervisorFunctions : databaseRole === 'mantenimiento' ? maintenanceFunctions : databaseRole === 'coordinador' || databaseRole === 'comunicacion' ? departmentFunctions : employeeFunctions;
   const title = databaseRole === 'administrador' ? 'Funciones administrativas' : databaseRole === 'supervisor' ? 'Supervisión municipal' : databaseRole === 'mantenimiento' ? 'Herramientas de campo' : 'Funciones del departamento';
+  const showFieldWorkflow = databaseRole === 'mantenimiento' || databaseRole === 'operador';
   const isWide = width >= 780;
 
   if (databaseRole === 'ciudadano' || !databaseRole) return <Redirect href="/services" />;
@@ -69,6 +70,13 @@ export default function AdminMenuScreen() {
         </View>
         <View style={styles.moduleCount}><Text style={[styles.moduleNumber, { color: visual.accent }]}>{visibleFunctions.length}</Text><Text style={styles.moduleLabel}>módulos disponibles</Text></View>
       </View>
+
+      {showFieldWorkflow && <View style={styles.workflowCard}>
+        <View style={styles.workflowHeading}><View style={[styles.workflowIcon, { backgroundColor: visual.primary }]}><Ionicons name="construct-outline" size={21} color={colors.white} /></View><View style={styles.cardText}><Text style={styles.workflowTitle}>Ruta de atención</Text><Text style={styles.workflowCopy}>Completa cada paso únicamente en las tareas asignadas a tu cuenta.</Text></View></View>
+        <View style={styles.workflowSteps}>
+          {[['1', 'Abrir tarea', 'Revisa ubicación, prioridad y evidencia'], ['2', 'Registrar avance', 'Actualiza el estado y agrega observaciones'], ['3', 'Adjuntar resultado', 'Añade evidencia final cuando corresponda']].map(([number, label, copy]) => <View key={number} style={styles.workflowStep}><View style={[styles.stepNumber, { backgroundColor: `${visual.accent}33` }]}><Text style={[styles.stepNumberText, { color: visual.primary }]}>{number}</Text></View><View style={styles.cardText}><Text style={styles.stepTitle}>{label}</Text><Text style={styles.stepCopy}>{copy}</Text></View></View>)}
+        </View>
+      </View>}
 
       <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>HERRAMIENTAS</Text><Text style={styles.sectionTitle}>¿Qué deseas hacer?</Text></View>
       <View style={[styles.grid, isWide && styles.gridWide]}>
@@ -112,5 +120,16 @@ const styles = StyleSheet.create({
   cardTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cardCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
   cardArrow: { flexShrink: 0, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  pressed: { opacity: 0.8 }
+  pressed: { opacity: 0.8 },
+  workflowCard: { backgroundColor: colors.white, borderRadius: radius.xl, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.md },
+  workflowHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  workflowIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  workflowTitle: { color: colors.text, fontSize: 18, fontWeight: '900' },
+  workflowCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  workflowSteps: { gap: spacing.sm },
+  workflowStep: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md },
+  stepNumber: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  stepNumberText: { fontWeight: '900' },
+  stepTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  stepCopy: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 }
 });

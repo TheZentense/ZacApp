@@ -133,7 +133,11 @@ export default function ProfileScreen() {
         {showSecurityForm && Platform.OS === 'android' && !isGuest && <View style={styles.passwordCard}>
           <Text style={styles.passwordTitle}>Desbloqueo biométrico</Text>
           <Text style={styles.securityCopy}>Actívalo en este dispositivo para proteger el acceso con la huella o el rostro registrados en Android.</Text>
-          {!biometricAvailable && <><Text style={styles.securityCopy}>Primero configura un bloqueo de pantalla y registra una huella o biometría fuerte en los ajustes del teléfono. ZacApp no crea ni almacena datos biométricos.</Text><AppButton label="Abrir ajustes del teléfono" variant="secondary" icon="settings-outline" onPress={() => { void Linking.openSettings(); }} /></>}
+          <View style={[styles.biometricStatus, biometricEnabled ? styles.biometricStatusEnabled : !biometricAvailable ? styles.biometricStatusUnavailable : null]}>
+            <Ionicons name={biometricEnabled ? 'shield-checkmark' : biometricAvailable ? 'finger-print-outline' : 'alert-circle-outline'} size={22} color={biometricEnabled || biometricAvailable ? colors.primary : colors.warning} />
+            <View style={styles.biometricStatusText}><Text style={styles.biometricStatusTitle}>{biometricEnabled ? 'Protección activa' : biometricAvailable ? 'Dispositivo listo' : 'Configuración necesaria'}</Text><Text style={styles.securityCopy}>{biometricEnabled ? 'ZacApp solicitará la biometría registrada al recuperar una sesión protegida.' : biometricAvailable ? 'El teléfono tiene una biometría fuerte disponible para esta cuenta.' : 'Registra una huella o rostro y activa el bloqueo de pantalla desde los ajustes de Android.'}</Text></View>
+          </View>
+          {!biometricAvailable && <><Text style={styles.biometricPrivacy}>ZacApp nunca recibe ni almacena tu huella o rostro; Android realiza la verificación dentro del dispositivo.</Text><AppButton label="Configurar biometría en Android" variant="secondary" icon="settings-outline" onPress={() => { void Linking.openSettings(); }} /></>}
           <AppButton label={biometricBusy ? 'Verificando...' : biometricEnabled ? 'Desactivar biometría' : 'Activar biometría'} icon="finger-print-outline" disabled={biometricBusy || (!biometricAvailable && !biometricEnabled)} onPress={() => { void toggleBiometrics(); }} />
           {biometricMessage ? <Text style={styles.securityCopy}>{biometricMessage}</Text> : null}
         </View>}
@@ -198,6 +202,12 @@ const styles = StyleSheet.create({
   errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, fontWeight: '700' },
   successBox: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   successText: { flex: 1, color: colors.primary, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  biometricStatus: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  biometricStatusEnabled: { borderColor: colors.secondary },
+  biometricStatusUnavailable: { backgroundColor: '#FFF7E8', borderColor: '#F2D49B' },
+  biometricStatusText: { flex: 1 },
+  biometricStatusTitle: { color: colors.text, fontSize: 14, fontWeight: '900' },
+  biometricPrivacy: { color: colors.muted, fontSize: 11, lineHeight: 17 },
   guestNotice: { borderRadius: radius.md, backgroundColor: colors.softGreen, padding: spacing.md, flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   guestNoticeText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' }
 });
