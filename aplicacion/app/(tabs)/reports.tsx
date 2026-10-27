@@ -320,7 +320,7 @@ export default function ReportsScreen() {
         {evidenceMessage ? <View style={styles.inlineSuccess}><Ionicons name="checkmark-circle-outline" size={18} color={colors.primary} /><Text style={styles.inlineSuccessText}>{evidenceMessage}</Text></View> : null}
       </View>}
     </> : <>
-      {databaseRole !== 'ciudadano' && !isLoading && !error ? <IncidentHeatmap incidents={readableIncidents} /> : null}
+      {databaseRole !== 'ciudadano' && !isLoading && !error ? <IncidentHeatmap incidents={incidents} /> : null}
       <View style={styles.filterPanel}>
         <View style={styles.searchBox}><Ionicons name="search-outline" size={20} color={colors.muted} /><TextInput value={search} onChangeText={(value) => { setSearch(value); setPage(1); }} placeholder="Buscar por código, título, categoría o ubicación" placeholderTextColor={colors.muted} style={styles.searchInput} /><Pressable disabled={!search} onPress={() => { setSearch(''); setPage(1); }} style={styles.clearSearch}><Ionicons name="close-circle" size={19} color={search ? colors.muted : colors.border} /></Pressable></View>
         <View style={styles.filterGroup}><Text style={styles.filterLabel}>Estado</Text><View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => { setFilter(item.key); setPage(1); }} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View></View>

@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, spacing } from '@/theme/tokens';
 import type { Incident } from '@/types/domain';
 import { OpenMapViewport } from '@/components/OpenMapViewport';
+import { IncidentHeatmapViewport } from '@/components/IncidentHeatmapViewport';
 
 const heatColors: Record<string, string> = {
   'Agua potable': '#1976D2',
@@ -29,26 +30,10 @@ export function ReportLocationMap({ latitude, longitude, label }: { latitude: nu
 export function IncidentHeatmap({ incidents }: { incidents: Incident[] }) {
   const located = incidents.filter((item): item is Incident & { latitude: number; longitude: number } => item.latitude != null && item.longitude != null);
   if (!located.length) return null;
-  const latitudes = located.map((item) => item.latitude);
-  const longitudes = located.map((item) => item.longitude);
-  const minLatitude = Math.min(...latitudes);
-  const maxLatitude = Math.max(...latitudes);
-  const minLongitude = Math.min(...longitudes);
-  const maxLongitude = Math.max(...longitudes);
-  const latitudeRange = Math.max(maxLatitude - minLatitude, 0.002);
-  const longitudeRange = Math.max(maxLongitude - minLongitude, 0.002);
-
   return <View style={styles.card}>
     <View style={styles.headingRow}><View style={styles.headingIcon}><Ionicons name="analytics-outline" size={21} color={colors.primary} /></View><View style={styles.headingText}><Text style={styles.title}>Concentración de incidencias</Text><Text style={styles.copy}>Distribución de los reportes visibles para este acceso.</Text></View></View>
-    <View style={styles.heatmap}>
-      <View style={styles.roadHorizontal} /><View style={styles.roadVertical} /><View style={styles.roadDiagonal} />
-      {located.map((item) => {
-        const left = 8 + ((item.longitude - minLongitude) / longitudeRange) * 84;
-        const top = 8 + ((maxLatitude - item.latitude) / latitudeRange) * 78;
-        return <View accessibilityLabel={`${item.category}: ${item.code}`} key={item.id} style={[styles.heatPoint, { left: `${left}%`, top: `${top}%`, backgroundColor: heatColors[item.category] ?? colors.secondary }]}><View style={styles.heatCore} /></View>;
-      })}
-      <View style={styles.heatLegend}><Text style={styles.heatLegendText}>{located.length} puntos con GPS</Text></View>
-    </View>
+    <IncidentHeatmapViewport incidents={located} />
+    <View style={styles.heatLegend}><Text style={styles.heatLegendText}>{located.length} puntos con GPS</Text></View>
     <View style={styles.legend}>{Array.from(new Set(located.map((item) => item.category))).map((category) => <View key={category} style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: heatColors[category] ?? colors.secondary }]} /><Text style={styles.legendText}>{category}</Text></View>)}</View>
   </View>;
 }
@@ -63,13 +48,7 @@ const styles = StyleSheet.create({
   openButton: { minHeight: 48, borderRadius: radius.md, backgroundColor: colors.primary, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingHorizontal: spacing.md },
   openButtonText: { color: colors.white, fontWeight: '800' },
   attribution: { color: colors.muted, fontSize: 10, textAlign: 'right' },
-  heatmap: { height: 260, borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#E9EFE5', borderWidth: 1, borderColor: colors.border },
-  roadHorizontal: { position: 'absolute', left: 0, right: 0, top: '46%', height: 11, backgroundColor: '#FFFFFF' },
-  roadVertical: { position: 'absolute', top: 0, bottom: 0, left: '58%', width: 9, backgroundColor: '#FFFFFF' },
-  roadDiagonal: { position: 'absolute', width: '130%', height: 8, left: '-15%', top: '68%', backgroundColor: '#FFFFFF', transform: [{ rotate: '-18deg' }] },
-  heatPoint: { position: 'absolute', width: 38, height: 38, marginLeft: -19, marginTop: -19, borderRadius: 19, opacity: 0.58, alignItems: 'center', justifyContent: 'center' },
-  heatCore: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.white, borderWidth: 2, borderColor: 'rgba(12,27,31,0.45)' },
-  heatLegend: { position: 'absolute', right: spacing.sm, bottom: spacing.sm, backgroundColor: 'rgba(12,27,31,0.78)', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  heatLegend: { alignSelf: 'flex-start', backgroundColor: colors.text, borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   heatLegendText: { color: colors.white, fontSize: 11, fontWeight: '800' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
