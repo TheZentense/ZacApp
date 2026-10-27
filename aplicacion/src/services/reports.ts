@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { isIncidentPriority, type Incident, type IncidentPriority, type IncidentStatus, type MaintenanceDepartment } from '@/types/domain';
+import { isIncidentPriority, type Incident, type IncidentPriority, type IncidentStatus } from '@/types/domain';
 import { readEvidenceBytes } from '@/services/evidenceImages';
 import { requireBackendCapability } from '@/lib/backendCapabilities';
 import { reportReadScopeFor } from '@/services/sessionPolicy';
@@ -252,6 +252,9 @@ export async function uploadReportEvidence(incidentId: string, evidence: ReportE
   return storagePath;
 }
 
+type DepartmentRelation = { name?: string } | { name?: string }[] | null;
+type CategoryRelation = { name?: string; department?: DepartmentRelation } | { name?: string; department?: DepartmentRelation }[] | null;
+
 type IncidentRow = {
   id: string;
   code: string;
@@ -266,8 +269,8 @@ type IncidentRow = {
   priority: unknown;
   assigned_department_id: number | null;
   assigned_to: string | null;
-  category: { name?: string } | { name?: string }[] | null;
-  assignedDepartment: { name?: string } | { name?: string }[] | null;
+  category: CategoryRelation;
+  assignedDepartment: DepartmentRelation;
   evidence: { id: string | number }[] | null;
 };
 
@@ -287,19 +290,6 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit'
   }).format(new Date(value));
-}
-
-function categoryName(category: IncidentRow['category']) {
-  if (Array.isArray(category)) return category[0]?.name ?? 'Sin categoría';
-  return category?.name ?? 'Sin categoría';
-}
-
-function departmentForCategory(category: string): MaintenanceDepartment {
-  if (category === 'Agua potable') return 'Agua';
-  if (category === 'Alumbrado público') return 'EEMZA';
-  if (category === 'Drenajes') return 'Drenajes';
-  if (category === 'Limpieza' || category === 'Desechos sólidos') return 'Desechos';
-  return 'Infraestructura';
 }
 
 function progressForStatus(status: IncidentStatus) {
@@ -346,7 +336,7 @@ export async function listReports(): Promise<Incident[]> {
   const { client, scope, userId, departmentId } = await requireReportReadAccess();
   let query = client
     .from('incidents')
-    .select('id, code, title, description, address_reference, latitude, longitude, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
+    .select('id, code, title, description, address_reference, latitude, longitude, status, priority, assigned_department_id, assigned_to, created_at, updated_at, category:categories(name, department:departments(name)), assignedDepartment:departments!incidents_assigned_department_id_fkey(name), evidence:incident_evidence(id)');
   if (scope === 'citizen') query = query.eq('citizen_id', userId);
   if (scope === 'department') query = query.eq('assigned_department_id', departmentId);
   if (scope === 'personal') query = query.eq('assigned_to', userId);
@@ -355,7 +345,11 @@ export async function listReports(): Promise<Incident[]> {
   if (error) throw error;
 
   return ((data ?? []) as unknown as IncidentRow[]).map((incident) => {
-    const category = categoryName(incident.category);
+    const categoryRelation = relationValue(incident.category);
+    const category = categoryRelation?.name ?? 'Sin categoría';
+    const department = incident.assigned_department_id != null
+      ? relationValue(incident.assignedDepartment)?.name
+      : relationValue(categoryRelation?.department ?? null)?.name;
     return {
       id: incident.id,
       code: incident.code,
@@ -368,7 +362,7 @@ export async function listReports(): Promise<Incident[]> {
       updatedAt: formatDate(incident.updated_at),
       latitude: incident.latitude,
       longitude: incident.longitude,
-      department: relationValue(incident.assignedDepartment)?.name ?? departmentForCategory(category),
+      department: department ?? 'Sin departamento',
       departmentId: incident.assigned_department_id,
       assignedToId: incident.assigned_to,
       priority: isIncidentPriority(incident.priority) ? incident.priority : 'MEDIA',
