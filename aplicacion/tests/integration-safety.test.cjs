@@ -10,6 +10,7 @@ function loader(overrides = {}, globals = {}) {
   const cache = new Map();
   let uuidSequence = 0;
   const nativeDoubles = {
+    '@/components/IncidentHeatmapViewport': { IncidentHeatmapViewport: 'IncidentHeatmapViewport' },
     'expo-crypto': { randomUUID: () => `00000000-0000-4000-8000-${String(++uuidSequence).padStart(12, '0')}` },
     'react-native': { Platform: { OS: 'android' } },
     'expo-file-system': { File: class { constructor() { throw new Error('Local file access must be mocked'); } } },
