@@ -1,4 +1,4 @@
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
@@ -22,6 +22,7 @@ export default function ProfileScreen() {
   const content = profileContent[role];
   const visual = roleVisuals[role];
   const isCitizen = role === 'citizen';
+  const [showAccountInfo, setShowAccountInfo] = useState(false);
   const [showSecurityForm, setShowSecurityForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -101,14 +102,14 @@ export default function ProfileScreen() {
           <View style={styles.verified}><Ionicons name={isGuest ? 'phone-portrait-outline' : 'shield-checkmark'} size={18} color={visual.accent} /><Text style={styles.verifiedText}>{isGuest ? 'Este dispositivo' : 'Verificada'}</Text></View>
         </View>
 
-        <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>IDENTIDAD DIGITAL</Text><Text style={styles.sectionTitle}>{isGuest ? 'Información de la sesión' : 'Información de la cuenta'}</Text></View>
-        <View style={styles.card}>
+        <Pressable style={styles.securityCard} onPress={() => setShowAccountInfo((value) => !value)}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="person-circle-outline" size={23} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>{isGuest ? 'Información de la sesión' : 'Información de la cuenta'}</Text><Text style={styles.securityCopy}>Consulta los datos y permisos asociados a este acceso.</Text></View><Ionicons name={showAccountInfo ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>
+        {showAccountInfo && <View style={styles.card}>
           <InfoRow icon="mail-outline" label="Correo" value={isGuest ? 'No se solicita para reportar' : email} />
           {!isGuest && <InfoRow icon="call-outline" label="Teléfono" value={phone || 'No registrado'} />}
           <InfoRow icon="location-outline" label="Municipio" value="Zacapa" />
           <InfoRow icon="business-outline" label={isCitizen ? 'Acceso' : 'Área'} value={isGuest ? 'Reportes ciudadanos sin cuenta' : isCitizen ? 'Reportes y servicios ciudadanos' : department ?? content.area} />
           <InfoRow icon="key-outline" label="Rol actual" value={isGuest ? 'Invitado' : content.role} />
-        </View>
+        </View>}
 
         {!isGuest && <Pressable style={styles.securityCard} onPress={() => { setShowProfileForm((value) => !value); setProfileName(fullName); setProfilePhone(phone); setProfileError(''); setProfileMessage(''); }}><View style={[styles.securityIcon, { backgroundColor: `${visual.accent}22` }]}><Ionicons name="create-outline" size={22} color={visual.primary} /></View><View style={styles.securityText}><Text style={styles.securityTitle}>Editar información</Text><Text style={styles.securityCopy}>Actualiza el nombre y teléfono asociados a tu cuenta.</Text></View><Ionicons name={showProfileForm ? 'chevron-up' : 'chevron-down'} size={19} color={visual.primary} /></Pressable>}
         {showProfileForm && <View style={styles.passwordCard}>
@@ -131,8 +132,8 @@ export default function ProfileScreen() {
         </View>}
         {showSecurityForm && Platform.OS === 'android' && !isGuest && <View style={styles.passwordCard}>
           <Text style={styles.passwordTitle}>Desbloqueo biométrico</Text>
-          <Text style={styles.securityCopy}>Actívalo en este dispositivo para volver a tu sesión con biometría fuerte. Siempre podrás usar la contraseña de tu cuenta.</Text>
-          {!biometricAvailable && <Text style={styles.securityCopy}>Este dispositivo necesita una huella o biometría fuerte registrada para habilitarlo.</Text>}
+          <Text style={styles.securityCopy}>Actívalo en este dispositivo para proteger el acceso con la huella o el rostro registrados en Android.</Text>
+          {!biometricAvailable && <><Text style={styles.securityCopy}>Primero configura un bloqueo de pantalla y registra una huella o biometría fuerte en los ajustes del teléfono. ZacApp no crea ni almacena datos biométricos.</Text><AppButton label="Abrir ajustes del teléfono" variant="secondary" icon="settings-outline" onPress={() => { void Linking.openSettings(); }} /></>}
           <AppButton label={biometricBusy ? 'Verificando...' : biometricEnabled ? 'Desactivar biometría' : 'Activar biometría'} icon="finger-print-outline" disabled={biometricBusy || (!biometricAvailable && !biometricEnabled)} onPress={() => { void toggleBiometrics(); }} />
           {biometricMessage ? <Text style={styles.securityCopy}>{biometricMessage}</Text> : null}
         </View>}

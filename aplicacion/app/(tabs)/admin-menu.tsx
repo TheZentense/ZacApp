@@ -71,7 +71,7 @@ export default function AdminMenuScreen() {
       </View>
 
       <View style={styles.sectionHeading}><Text style={styles.sectionKicker}>HERRAMIENTAS</Text><Text style={styles.sectionTitle}>¿Qué deseas hacer?</Text></View>
-      <View style={styles.grid}>
+      <View style={[styles.grid, isWide && styles.gridWide]}>
         {visibleFunctions.map((item) => (
           <Pressable key={item.title} style={({ pressed }) => [styles.card, isWide && styles.cardWide, pressed && styles.pressed]} onPress={() => openFunction(item)}>
             <View style={[styles.icon, { backgroundColor: visual.primary }]}><Ionicons name={item.icon} size={23} color={colors.white} /></View>
@@ -103,13 +103,14 @@ const styles = StyleSheet.create({
   sectionHeading: { gap: 2 },
   sectionKicker: { color: colors.secondary, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '800' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  card: { minHeight: 82, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  cardWide: { flexBasis: 340, flexGrow: 1 },
-  icon: { width: 46, height: 46, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
-  cardText: { flex: 1 },
+  grid: { gap: spacing.sm },
+  gridWide: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  card: { width: '100%', minHeight: 86, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: spacing.md, overflow: 'hidden' },
+  cardWide: { width: '48%', flexGrow: 1, flexBasis: 340 },
+  icon: { flexShrink: 0, width: 46, height: 46, borderRadius: 14, backgroundColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  cardText: { flex: 1, minWidth: 0 },
   cardTitle: { color: colors.primary, fontSize: 16, fontWeight: '800' },
   cardCopy: { color: colors.muted, marginTop: spacing.xs, lineHeight: 19 },
-  cardArrow: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  cardArrow: { flexShrink: 0, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.8 }
 });

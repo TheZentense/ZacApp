@@ -41,11 +41,6 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const revealForm = () => {
-    if (!isNativeMobile) return;
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  };
-
   const submit = async () => {
     if (!email.trim() || !password) {
       setErrorMessage('Ingresa tu correo electrónico y contraseña.');
@@ -135,13 +130,12 @@ export default function LoginScreen() {
               placeholderTextColor={colors.muted}
               editable={!isSubmitting}
               onSubmitEditing={() => passwordInputRef.current?.focus()}
-              onFocus={revealForm}
               returnKeyType="next"
             />
 
             <Text style={styles.label}>Contraseña</Text>
             <View style={styles.passwordField}>
-              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onFocus={revealForm} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
+              <TextInput style={styles.passwordInput} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} placeholder="Contraseña" placeholderTextColor={colors.muted} editable={!isSubmitting} onSubmitEditing={submit} returnKeyType="done" ref={passwordInputRef} />
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 

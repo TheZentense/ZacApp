@@ -215,7 +215,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (backgroundAt && Date.now() - Number(backgroundAt) >= BACKGROUND_SESSION_LIMIT_MS) {
           await signOutLocal();
         } else {
-          await lockRegisteredSession(user);
+          await AsyncStorage.removeItem(BACKGROUND_AT_KEY);
+          if (await isBiometricEnabledFor(user.id)) await lockRegisteredSession(user);
+          else {
+            const isActive = await hydrateIdentity(user);
+            if (!isActive) await signOutLocal();
+            else client.auth.startAutoRefresh?.();
+          }
         }
       } else {
         const isActive = await hydrateIdentity(user);
@@ -274,7 +280,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background' && registeredUserRef.current && !isLocked) {
         void AsyncStorage.setItem(BACKGROUND_AT_KEY, String(Date.now()));
-        void lockRegisteredSession(registeredUserRef.current);
       } else if (nextState === 'active') {
         void (async () => {
           const backgroundAt = await AsyncStorage.getItem(BACKGROUND_AT_KEY);

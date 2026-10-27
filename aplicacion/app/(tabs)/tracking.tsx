@@ -12,6 +12,7 @@ import { roleVisuals } from '@/theme/roles';
 import { listReportEvidence, listReportHistory, type ReportEvidence, type ReportHistoryEntry } from '@/services/reports';
 import { reportReadScopeFor, workflowPermissionsFor } from '@/services/sessionPolicy';
 import { supabase } from '@/lib/supabase';
+import { PaginationControls } from '@/components/PaginationControls';
 
 const historyStatusLabels: Record<Incident['status'], string> = {
   REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
@@ -43,6 +44,8 @@ export default function TrackingScreen() {
   const { incidents: availableIncidents, isLoading, error, reload, isPreview } = useReports();
   const pending = reportReadScopeFor(databaseRole) === 'pending' && !isPreview;
   const [category, setCategory] = useState('Todas');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedItem, setSelected] = useState<Incident | null>(null);
   const selected = pending || isPreview ? null : availableIncidents.find((item) => item.id === selectedItem?.id) ?? null;
   const [history, setHistory] = useState<ReportHistoryEntry[]>([]);
@@ -58,6 +61,9 @@ export default function TrackingScreen() {
   const visibleEvidence = detailOwner === detailIdentityKey ? evidence : [];
   const categories = useMemo(() => ['Todas', ...new Set((isPreview ? [] : availableIncidents).map((item) => item.category))], [availableIncidents, isPreview]);
   const incidents = useMemo(() => availableIncidents.filter((item) => !isPreview && (category === 'Todas' || item.category === category)), [availableIncidents, category, isPreview]);
+  const pageCount = Math.max(1, Math.ceil(incidents.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedIncidents = incidents.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const heading = permissions.operator ? 'Seguimiento de mis tareas' : permissions.departmentReports ? 'Seguimiento del departamento' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
   const completedSteps = selected ? completedByStatus[selected.status] ?? 0 : 0;
@@ -162,8 +168,8 @@ export default function TrackingScreen() {
         </View>}
       </View>
     </> : <>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => setCategory(item)} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
-      {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : isPreview ? <EmptyState title="Consulta real no disponible" description="El seguimiento se mostrará cuando la consulta real esté disponible." /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectIncident(item)} />)}</View> : <EmptyState title={category === 'Todas' ? 'Aún no hay seguimiento disponible' : 'Sin coincidencias'} description={category !== 'Todas' ? 'Selecciona Todas para consultar las demás categorías.' : permissions.departmentReports ? 'Aquí aparecerá el seguimiento de los reportes canalizados a tu departamento.' : 'Aquí aparecerán el historial y las fotografías de tus reportes visibles.'} />}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>{categories.map((item) => <Pressable key={item} onPress={() => { setCategory(item); setPage(1); }} style={[styles.filter, category === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, category === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</ScrollView>
+      {isLoading ? <LoadingState label="Consultando el seguimiento..." /> : error ? <ErrorState description={error} onRetry={reload} /> : isPreview ? <EmptyState title="Consulta real no disponible" description="El seguimiento se mostrará cuando la consulta real esté disponible." /> : incidents.length ? <><View style={styles.list}>{pagedIncidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectIncident(item)} />)}</View><PaginationControls page={currentPage} pageCount={pageCount} pageSize={pageSize} total={incidents.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} /></> : <EmptyState title={category === 'Todas' ? 'Aún no hay seguimiento disponible' : 'Sin coincidencias'} description={category !== 'Todas' ? 'Selecciona Todas para consultar las demás categorías.' : permissions.departmentReports ? 'Aquí aparecerá el seguimiento de los reportes canalizados a tu departamento.' : 'Aquí aparecerán el historial y las fotografías de tus reportes visibles.'} />}
     </>}
   </ScrollView>;
 }

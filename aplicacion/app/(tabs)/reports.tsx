@@ -15,6 +15,7 @@ import { getReporterContact, listDepartments, listDepartmentStaff, listReportEvi
 import { AppButton } from '@/components/AppButton';
 import { IncidentHeatmap, ReportLocationMap } from '@/components/IncidentLocation';
 import { supabase } from '@/lib/supabase';
+import { PaginationControls } from '@/components/PaginationControls';
 
 type Filter = 'TODOS' | 'ACTIVOS' | 'CERRADOS';
 type PriorityFilter = 'TODAS' | IncidentPriority;
@@ -51,8 +52,10 @@ export default function ReportsScreen() {
   const { role, databaseRole, department, userId, isAuthenticated } = useSession();
   const visual = roleVisuals[role];
   const { incidents: availableIncidents, isLoading, error, reload } = useReports();
-  const [filter, setFilter] = useState<Filter>('TODOS');
+  const [filter, setFilter] = useState<Filter>('ACTIVOS');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('TODAS');
   const [departmentFilter, setDepartmentFilter] = useState('TODOS');
   const [selectedItem, setSelected] = useState<Incident | null>(null);
@@ -93,7 +96,13 @@ export default function ReportsScreen() {
     const matchesPriority = priorityFilter === 'TODAS' || item.priority === priorityFilter;
     const matchesDepartment = departmentFilter === 'TODOS' || item.department === departmentFilter;
     return matchesStatus && matchesSearch && matchesPriority && matchesDepartment;
+  }).sort((left, right) => {
+    const rank = (status: IncidentStatus) => status === 'REGISTRADO' ? 0 : status === 'EN_REVISION' ? 1 : status === 'VALIDADO' ? 2 : status === 'ASIGNADO' ? 3 : status === 'EN_ATENCION' ? 4 : status === 'POR_VERIFICAR' ? 5 : 6;
+    return rank(left.status) - rank(right.status);
   }), [readableIncidents, departmentFilter, filter, priorityFilter, search]);
+  const pageCount = Math.max(1, Math.ceil(incidents.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedIncidents = incidents.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const heading = databaseRole === 'administrador' || databaseRole === 'supervisor' ? 'Reportes generales' : databaseRole === 'mantenimiento' ? `Asignaciones · ${department}` : databaseRole === 'operador' ? `Tareas asignadas · ${department}` : databaseRole === 'coordinador' || databaseRole === 'comunicacion' ? `Reportes · ${department}` : 'Mis reportes';
   const description = role === 'citizen' ? 'Consulta únicamente los reportes enviados desde tu cuenta.' : databaseRole === 'administrador' || databaseRole === 'supervisor' ? 'Consulta reportes de todos los departamentos.' : `Consulta únicamente los casos de ${department}.`;
   const availableTransitions = selected
@@ -265,9 +274,9 @@ export default function ReportsScreen() {
         <DetailRow label="Departamento" value={selected.department} />
         <DetailRow label="Ubicación" value={selected.location} />
         {selected.latitude != null && selected.longitude != null ? <DetailRow label="Coordenadas GPS" value={`${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}`} /> : null}
-        {databaseRole === 'administrador' && visibleContact?.name ? <DetailRow label="Ciudadano" value={visibleContact.name} /> : null}
+        {databaseRole === 'administrador' ? <DetailRow label="Ciudadano" value={visibleContact?.name || 'Anónimo'} /> : null}
         {databaseRole === 'administrador' && visibleContact?.email ? <DetailRow label="Correo" value={visibleContact.email} /> : null}
-        {databaseRole === 'administrador' && visibleContactError ? <Text style={styles.inlineErrorText}>{visibleContactError}</Text> : null}
+        {databaseRole === 'administrador' && visibleContactError && visibleContact ? <Text style={styles.inlineErrorText}>{visibleContactError}</Text> : null}
       </View>
       {databaseRole !== 'ciudadano' && selected.latitude != null && selected.longitude != null ? <ReportLocationMap latitude={selected.latitude} longitude={selected.longitude} label={selected.location} /> : null}
       <View style={styles.managementCard}>
@@ -313,13 +322,13 @@ export default function ReportsScreen() {
     </> : <>
       {databaseRole !== 'ciudadano' && !isLoading && !error ? <IncidentHeatmap incidents={readableIncidents} /> : null}
       <View style={styles.filterPanel}>
-        <View style={styles.searchBox}><Ionicons name="search-outline" size={20} color={colors.muted} /><TextInput value={search} onChangeText={setSearch} placeholder="Buscar por código, título, categoría o ubicación" placeholderTextColor={colors.muted} style={styles.searchInput} /><Pressable disabled={!search} onPress={() => setSearch('')} style={styles.clearSearch}><Ionicons name="close-circle" size={19} color={search ? colors.muted : colors.border} /></Pressable></View>
-        <View style={styles.filterGroup}><Text style={styles.filterLabel}>Estado</Text><View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => setFilter(item.key)} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View></View>
+        <View style={styles.searchBox}><Ionicons name="search-outline" size={20} color={colors.muted} /><TextInput value={search} onChangeText={(value) => { setSearch(value); setPage(1); }} placeholder="Buscar por código, título, categoría o ubicación" placeholderTextColor={colors.muted} style={styles.searchInput} /><Pressable disabled={!search} onPress={() => { setSearch(''); setPage(1); }} style={styles.clearSearch}><Ionicons name="close-circle" size={19} color={search ? colors.muted : colors.border} /></Pressable></View>
+        <View style={styles.filterGroup}><Text style={styles.filterLabel}>Estado</Text><View style={styles.filters}>{filters.map((item) => <Pressable key={item.key} onPress={() => { setFilter(item.key); setPage(1); }} style={[styles.filter, filter === item.key && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, filter === item.key && styles.filterTextActive]}>{item.label}</Text></Pressable>)}</View></View>
         <View style={styles.filterGroup}><Text style={styles.filterLabel}>Prioridad</Text><View style={styles.filters}>{(['TODAS', ...priorities] as PriorityFilter[]).map((item) => <Pressable key={item} onPress={() => setPriorityFilter(item)} style={[styles.filter, priorityFilter === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, priorityFilter === item && styles.filterTextActive]}>{item === 'TODAS' ? 'Todas' : item.charAt(0) + item.slice(1).toLowerCase()}</Text></Pressable>)}</View></View>
         {canManageAssignment && departmentOptions.length > 1 && <View style={styles.filterGroup}><Text style={styles.filterLabel}>Departamento</Text><View style={styles.filters}><Pressable onPress={() => setDepartmentFilter('TODOS')} style={[styles.filter, departmentFilter === 'TODOS' && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, departmentFilter === 'TODOS' && styles.filterTextActive]}>Todos</Text></Pressable>{departmentOptions.map((item) => <Pressable key={item} onPress={() => setDepartmentFilter(item)} style={[styles.filter, departmentFilter === item && { backgroundColor: visual.primary, borderColor: visual.primary }]}><Text style={[styles.filterText, departmentFilter === item && styles.filterTextActive]}>{item}</Text></Pressable>)}</View></View>}
       </View>
       {!isLoading && !error && <Text style={styles.resultCount}>{incidents.length} {incidents.length === 1 ? 'reporte encontrado' : 'reportes encontrados'}</Text>}
-      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <View style={styles.list}>{incidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View> : <View style={styles.list}><EmptyState title="Sin coincidencias" description="Cambia la búsqueda o alguno de los filtros para consultar otros casos." /><AppButton label="Limpiar filtros" variant="secondary" onPress={() => { setSearch(''); setFilter('TODOS'); setPriorityFilter('TODAS'); setDepartmentFilter('TODOS'); }} /></View>}
+      {isLoading ? <LoadingState /> : error ? <ErrorState description={error} onRetry={reload} /> : incidents.length ? <><View style={styles.list}>{pagedIncidents.map((item) => <IncidentCard key={item.id} incident={item} compact onPress={() => selectReport(item)} />)}</View><PaginationControls page={currentPage} pageCount={pageCount} pageSize={pageSize} total={incidents.length} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} /></> : <View style={styles.list}><EmptyState title="Sin coincidencias" description="Cambia la búsqueda o alguno de los filtros para consultar otros casos." /><AppButton label="Limpiar filtros" variant="secondary" onPress={() => { setSearch(''); setFilter('ACTIVOS'); setPriorityFilter('TODAS'); setDepartmentFilter('TODOS'); setPage(1); }} /></View>}
     </>}
   </ScrollView>;
 }
