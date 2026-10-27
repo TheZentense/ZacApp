@@ -20,7 +20,7 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
-    name: 'ZacApp Biometría',
+    name: 'ZacApp',
     scheme: 'zacapp-biometric-test',
     android: {
       ...config.android,

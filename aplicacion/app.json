@@ -3,6 +3,7 @@
     "name": "ZacApp",
     "slug": "zacapp",
     "version": "0.3.0",
+    "icon": "./assets/images/zacapp-logo-dark.png",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -16,6 +17,7 @@
     "android": {
       "package": "gt.edu.zacapp",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/images/zacapp-logo-dark.png",
         "backgroundColor": "#F2F7EE"
       },
       "permissions": [
