@@ -1969,6 +1969,13 @@ test('Android auth callback rejects provider errors without changing the session
   assert.equal(authCalls, 0);
 });
 
+test('expired Android access links are visible on login and password recovery screens', () => {
+  const login = fs.readFileSync(path.resolve(__dirname, '..', 'app/login.tsx'), 'utf8');
+  const reset = fs.readFileSync(path.resolve(__dirname, '..', 'app/reset-password.tsx'), 'utf8');
+  assert.match(login, /errorMessage \|\| profileError/);
+  assert.match(reset, /profileError \|\| 'Este enlace no contiene una sesión de recuperación válida o ya venció\.'/);
+});
+
 test('Android auth storage migrates a legacy token only after encryption succeeds', async () => {
   const legacy = new Map([['sb-local-auth-token', 'session-token']]);
   const secured = new Map();

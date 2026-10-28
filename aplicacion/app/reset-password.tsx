@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 export default function ResetPasswordScreen() {
-  const { completePasswordRecovery } = useSession();
+  const { completePasswordRecovery, profileError } = useSession();
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [recoveryReady, setRecoveryReady] = useState(false);
@@ -34,7 +34,7 @@ export default function ResetPasswordScreen() {
   return <ScrollView style={styles.page} contentContainerStyle={styles.content}><View style={styles.card}>
     <View style={styles.icon}><Ionicons name={complete ? 'checkmark-circle-outline' : 'lock-closed-outline'} size={30} color={colors.primary} /></View>
     <Text style={styles.title}>{complete ? 'Contraseña actualizada' : 'Establece una contraseña nueva'}</Text>
-    {!complete && !recoveryReady ? <><Text style={styles.copy}>Este enlace no contiene una sesión de recuperación válida o ya venció.</Text><AppButton label="Solicitar otro enlace" icon="mail-outline" onPress={() => router.replace('/forgot-password')} /></> : null}
+    {!complete && !recoveryReady ? <><Text style={styles.copy}>{profileError || 'Este enlace no contiene una sesión de recuperación válida o ya venció.'}</Text><AppButton label="Solicitar otro enlace" icon="mail-outline" onPress={() => router.replace('/forgot-password')} /></> : null}
     {!complete && recoveryReady ? <><Text style={styles.copy}>Utiliza al menos 8 caracteres y evita reutilizar tu contraseña anterior.</Text><Text style={styles.label}>Contraseña nueva</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry placeholder="Mínimo 8 caracteres" placeholderTextColor={colors.muted} style={styles.input} /><Text style={styles.label}>Confirmar contraseña</Text><TextInput value={confirmation} onChangeText={setConfirmation} secureTextEntry placeholder="Repite la contraseña" placeholderTextColor={colors.muted} style={styles.input} />{error ? <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View> : null}<AppButton label={loading ? 'Actualizando...' : 'Guardar contraseña'} icon="key-outline" disabled={loading} onPress={submit} /></> : null}
     {complete && <><Text style={styles.copy}>Ya puedes utilizar la contraseña nueva para ingresar a ZacApp.</Text><AppButton label="Ir al inicio de sesión" icon="log-in-outline" onPress={() => router.replace('/login')} /></>}
   </View></ScrollView>;

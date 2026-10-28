@@ -19,7 +19,7 @@ export default function LoginScreen() {
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const passwordInputRef = useRef<ComponentRef<typeof TextInput>>(null);
-  const { signIn, isAuthenticated, isGuest, isLoading, isLocked } = useSession();
+  const { signIn, isAuthenticated, isGuest, isLoading, isLocked, profileError } = useSession();
   const { width } = useWindowDimensions();
   const isNativeMobile = Platform.OS !== 'web' && width < 768;
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
@@ -139,7 +139,7 @@ export default function LoginScreen() {
               <Pressable accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={() => setShowPassword((value) => !value)} style={styles.passwordToggle}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color={colors.secondary} /></Pressable>
             </View>
 
-            {errorMessage ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
+            {errorMessage || profileError ? <View style={styles.errorBox}><Text style={styles.errorText}>{errorMessage || profileError}</Text></View> : null}
 
             {captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_login" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
 
