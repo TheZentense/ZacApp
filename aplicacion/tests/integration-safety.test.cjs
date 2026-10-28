@@ -1901,6 +1901,22 @@ test('Turnstile protects every public authentication entry without exposing its 
   assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
 });
 
+test('citizen confirmation resend and recovery preserve the ZacApp return route', () => {
+  const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+  const session = read('src/context/SessionContext.tsx');
+  const register = read('app/register.tsx');
+  const recovery = read('app/forgot-password.tsx');
+
+  assert.match(register, /Linking\.createURL\('\/login'\)/);
+  assert.match(register, /linkGuestEmail\(name, email, password, emailRedirectTo\)/);
+  assert.match(register, /signUp\(name, email, password, captchaToken \|\| undefined, emailRedirectTo\)/);
+  assert.match(register, /supabase\.auth\.resend\([\s\S]*options: \{ emailRedirectTo \}/);
+  assert.match(session, /updateUser\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : undefined/);
+  assert.match(session, /supabase\.auth\.signUp\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : \{\}/);
+  assert.match(recovery, /Linking\.createURL\('\/reset-password'\)/);
+  assert.match(session, /resetPasswordForEmail[\s\S]*redirectTo/);
+});
+
 test('Android auth storage migrates a legacy token only after encryption succeeds', async () => {
   const legacy = new Map([['sb-local-auth-token', 'session-token']]);
   const secured = new Map();
