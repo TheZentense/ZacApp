@@ -33,3 +33,20 @@ test('anonymous report flow is not placed in the offline queue', () => {
   assert.match(source, /if \(!isGuest && Platform\.OS !== 'web' && userId\)/);
   assert.doesNotMatch(source, /queueOfflineReport\([^)]*turnstileToken/);
 });
+
+test('final Android APK keeps the ZacApp identity, production updates and a safe adaptive foreground', () => {
+  const app = JSON.parse(read('app.json')).expo;
+  const eas = JSON.parse(read('eas.json'));
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(app.name, 'ZacApp');
+  assert.equal(app.android.package, 'gt.edu.zacapp');
+  assert.equal(app.version, '0.4.0');
+  assert.equal(app.runtimeVersion.policy, 'appVersion');
+  assert.equal(app.android.adaptiveIcon.foregroundImage, './assets/images/zacapp-adaptive-foreground.png');
+  assert.equal(app.android.adaptiveIcon.backgroundColor, '#183B21');
+  assert.equal(eas.build['release-apk'].extends, 'production');
+  assert.equal(eas.build['release-apk'].android.buildType, 'apk');
+  assert.equal(eas.build.production.channel, 'production');
+  assert.equal(pkg.scripts['build:apk'], 'eas build --platform android --profile release-apk');
+  assert.ok(fs.existsSync(path.join(root, 'assets/images/zacapp-adaptive-foreground.png')));
+});
