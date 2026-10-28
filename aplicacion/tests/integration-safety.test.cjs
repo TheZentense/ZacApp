@@ -594,6 +594,18 @@ test('mobile report navigation distinguishes general, department and personal vi
   }
 });
 
+test('citizen navigation keeps report status in one personal workspace', () => {
+  const layout = fs.readFileSync(path.resolve(__dirname, '..', 'app/(tabs)/_layout.tsx'), 'utf8');
+  const services = fs.readFileSync(path.resolve(__dirname, '..', 'app/(tabs)/services.tsx'), 'utf8');
+  const citizenBlock = layout.match(/const citizenNavigation = \[([\s\S]*?)\] satisfies/)?.[1] ?? '';
+
+  assert.match(citizenBlock, /Mis reportes/);
+  assert.doesNotMatch(citizenBlock, /Seguimiento/);
+  assert.match(layout, /name="tracking"[\s\S]*href: isStaff \? '\/tracking' : null/);
+  assert.doesNotMatch(services, /title: 'Seguimiento'/);
+  assert.match(services, /Mis reportes[\s\S]*avances, historial y fotograf[ií]as/);
+});
+
 test('supervisor and department readers see reports without administrative controls', () => {
   for (const role of ['supervisor', 'coordinador', 'comunicacion']) {
     const harness = workflowScreenHarness(role, [{ ...reportsFixture('MEDIA'), status: 'VALIDADO' }]);
