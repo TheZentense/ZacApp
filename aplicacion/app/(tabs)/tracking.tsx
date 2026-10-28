@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IncidentCard } from '@/components/IncidentCard';
 import { EmptyState } from '@/components/EmptyState';
@@ -13,6 +13,7 @@ import { listReportEvidence, listReportHistory, type ReportEvidence, type Report
 import { reportReadScopeFor, workflowPermissionsFor } from '@/services/sessionPolicy';
 import { supabase } from '@/lib/supabase';
 import { PaginationControls } from '@/components/PaginationControls';
+import { listOfflineReports, subscribeOfflineReports, syncOfflineReports, type OfflineReport } from '@/services/offlineReports';
 
 const historyStatusLabels: Record<Incident['status'], string> = {
   REGISTRADO: 'Registrado', EN_REVISION: 'En revisión', VALIDADO: 'Validado', ASIGNADO: 'Asignado',
@@ -56,6 +57,8 @@ export default function TrackingScreen() {
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [detailOwner, setDetailOwner] = useState('');
+  const [offlineReports, setOfflineReports] = useState<OfflineReport[]>([]);
+  const [offlineSyncing, setOfflineSyncing] = useState(false);
   const detailIdentityKey = JSON.stringify([userId, databaseRole, selected?.id]);
   const visibleHistory = detailOwner === detailIdentityKey ? history : [];
   const visibleEvidence = detailOwner === detailIdentityKey ? evidence : [];
@@ -68,6 +71,31 @@ export default function TrackingScreen() {
   const heading = permissions.operator ? 'Seguimiento de mis tareas' : permissions.departmentReports ? 'Seguimiento del departamento' : role === 'citizen' ? 'Seguimiento de mis reportes' : 'Seguimiento general';
   const completedSteps = selected ? completedByStatus[selected.status] ?? 0 : 0;
   const progress = Math.round((completedSteps / steps.length) * 100);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || role !== 'citizen' || !userId) return;
+    let active = true;
+    const refreshOffline = () => {
+      void listOfflineReports(userId).then((items) => { if (active) setOfflineReports(items); });
+    };
+    refreshOffline();
+    const unsubscribe = subscribeOfflineReports((items) => {
+      if (active) setOfflineReports(items.filter((item) => item.userId === userId));
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [role, userId]);
+
+  const retryOfflineReports = async () => {
+    if (!userId || offlineSyncing) return;
+    setOfflineSyncing(true);
+    try {
+      const result = await syncOfflineReports(userId);
+      setOfflineReports(await listOfflineReports(userId));
+      if (result.sent) reload();
+    } finally {
+      setOfflineSyncing(false);
+    }
+  };
 
   useEffect(() => {
     const client = supabase;
@@ -144,6 +172,11 @@ export default function TrackingScreen() {
       <View style={styles.headerMark}><View style={[styles.headerIcon, { backgroundColor: visual.accent }]}><Ionicons name="pulse-outline" size={25} color={visual.primary} /></View><Text style={[styles.eyebrow, { color: visual.accent }]}>{visual.eyebrow} · SEGUIMIENTO</Text></View>
       <Text style={styles.title}>{heading}</Text><Text style={styles.copy}>{selected ? 'Consulta las etapas del reporte seleccionado.' : 'Elige un reporte para consultar su historial.'}</Text>
     </View>
+    {offlineReports.length > 0 && <View style={styles.offlineCard}>
+      <View style={styles.offlineIcon}><Ionicons name="cloud-offline-outline" size={22} color={colors.secondary} /></View>
+      <View style={styles.offlineBody}><Text style={styles.offlineTitle}>{offlineReports.length} {offlineReports.length === 1 ? 'reporte pendiente' : 'reportes pendientes'}</Text><Text style={styles.offlineCopy}>Se enviarán automáticamente al recuperar Internet. Las fotografías permanecen guardadas en este dispositivo.</Text></View>
+      <Pressable disabled={offlineSyncing} onPress={retryOfflineReports} style={styles.offlineButton}>{offlineSyncing ? <ActivityIndicator size="small" color={colors.white} /> : <Text style={styles.offlineButtonText}>Reintentar</Text>}</Pressable>
+    </View>}
     {selected ? <>
       <Pressable style={styles.backButton} onPress={clearSelectedIncident}><Ionicons name="arrow-back" size={19} color={visual.primary} /><Text style={[styles.backText, { color: visual.primary }]}>Elegir otro reporte</Text></Pressable>
       <View style={[styles.caseCard, { backgroundColor: visual.primary }]}>
@@ -226,5 +259,12 @@ const styles = StyleSheet.create({
   historyBody: { flex: 1, paddingBottom: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
   historyState: { color: colors.text, fontSize: 15, fontWeight: '800' },
   historyMeta: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
-  historyNote: { color: colors.text, lineHeight: 19, marginTop: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.sm, padding: spacing.sm }
+  historyNote: { color: colors.text, lineHeight: 19, marginTop: spacing.sm, backgroundColor: colors.surface, borderRadius: radius.sm, padding: spacing.sm },
+  offlineCard: { backgroundColor: '#FFF8E7', borderColor: '#E7C56B', borderWidth: 1, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
+  offlineIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
+  offlineBody: { flex: 1, minWidth: 180 },
+  offlineTitle: { color: colors.text, fontWeight: '900' },
+  offlineCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  offlineButton: { minWidth: 92, minHeight: 38, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' },
+  offlineButtonText: { color: colors.white, fontWeight: '800', fontSize: 12 }
 });

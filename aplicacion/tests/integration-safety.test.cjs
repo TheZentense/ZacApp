@@ -1243,6 +1243,8 @@ function reportScreenHarness(client, File, options = {}) {
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'react-native': { ...native, Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, StyleSheet: { create: (value) => value } },
+    '@react-native-community/netinfo': { fetch: async () => ({ isConnected: true, isInternetReachable: true }) },
+    '@/services/offlineReports': { cacheReportCategories: async () => {}, readCachedReportCategories: async () => [], queueOfflineReport: async () => ({ id: 'queued-report' }) },
     'expo-file-system': { File },
     'expo-router': { Redirect: 'Redirect', router: {} },
     'expo-camera': { CameraView: 'CameraView', useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] },
@@ -1260,7 +1262,7 @@ function reportScreenHarness(client, File, options = {}) {
     '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
     '@/components/TurnstileChallenge': { TurnstileChallenge: 'TurnstileChallenge' },
     '@/lib/supabase': { supabase: client, isSupabaseConfigured: true },
-    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
+    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', userId: 'citizen-local', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
     'expo-image-picker': { launchImageLibraryAsync: options.pickImages ?? (async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] })) },
     'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, height: 600, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
   }, { process: { env: {} } });
@@ -2482,7 +2484,7 @@ test('tracking hides signed photos and history immediately when the authorized a
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: 'Fragment' },
     'react-native': {
       ...Object.fromEntries(['View', 'Text', 'Pressable', 'ScrollView', 'Image', 'ActivityIndicator'].map((name) => [name, name])),
-      AppState: { addEventListener: () => ({ remove() {} }) }, StyleSheet: { create: (value) => value }
+      AppState: { addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'android' }, StyleSheet: { create: (value) => value }
     },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
     '@/components/IncidentCard': { IncidentCard: 'IncidentCard' },
@@ -2497,6 +2499,7 @@ test('tracking hides signed photos and history immediately when the authorized a
         return [{ id: 'photo', url: `https://signed.invalid/${identity.userId}`, createdAt: 'Hoy' }];
       }
     },
+    '@/services/offlineReports': { listOfflineReports: async () => [], subscribeOfflineReports: () => () => {}, syncOfflineReports: async () => ({ sent: 0, pending: 0 }) },
     '@/lib/supabase': { supabase: null }
   })('app/(tabs)/tracking.tsx').default;
   const render = () => { index = 0; effects = []; return component(); };

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import * as Crypto from 'expo-crypto';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
@@ -13,6 +15,7 @@ import { useSession } from '@/context/SessionContext';
 import { optimizeEvidence, selectEvidenceImages } from '@/services/evidenceImages';
 import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 import { guestReportProtectionEnabled } from '@/lib/guestReportSecurity';
+import { cacheReportCategories, queueOfflineReport, readCachedReportCategories } from '@/services/offlineReports';
 
 const previewCategories: ReportCategory[] = [
   { id: 1, name: 'Alumbrado público' },
@@ -33,7 +36,7 @@ function categoryIcon(name: string): keyof typeof Ionicons.glyphMap {
 }
 
 export default function NewReportScreen() {
-  const { role, email, fullName, isAuthenticated, isGuest, isLoading, isPasswordRecovery, signInAsGuest } = useSession();
+  const { role, email, fullName, userId, isAuthenticated, isGuest, isLoading, isPasswordRecovery, signInAsGuest } = useSession();
   const mountedRef = useRef(true);
   const [categories, setCategories] = useState<ReportCategory[]>(isSupabaseConfigured ? [] : previewCategories);
   const [category, setCategory] = useState(isSupabaseConfigured ? '' : previewCategories[0].name);
@@ -52,6 +55,7 @@ export default function NewReportScreen() {
   const imageInFlight = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createdIncident, setCreatedIncident] = useState<{ id: string; code: string } | null>(null);
+  const [queuedIncident, setQueuedIncident] = useState<{ id: string } | null>(null);
   const createdIncidentRef = useRef<{ id: string; code: string } | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [captchaToken, setCaptchaToken] = useState('');
@@ -100,9 +104,12 @@ export default function NewReportScreen() {
       const availableCategories = await listReportCategories();
       if (!mountedRef.current) return;
       applyCategories(availableCategories);
+      await cacheReportCategories(availableCategories);
     } catch (error) {
       if (!mountedRef.current) return;
-      setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
+      const cached = await readCachedReportCategories();
+      if (cached.length) applyCategories(cached);
+      else setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
     } finally {
       if (!mountedRef.current) return;
       setCategoriesLoading(false);
@@ -118,10 +125,14 @@ export default function NewReportScreen() {
       .then((availableCategories) => {
         if (!active || !mountedRef.current) return;
         applyCategories(availableCategories);
+        void cacheReportCategories(availableCategories);
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (!active || !mountedRef.current) return;
-        setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
+        const cached = await readCachedReportCategories();
+        if (!active || !mountedRef.current) return;
+        if (cached.length) applyCategories(cached);
+        else setCategoriesError(error instanceof Error ? error.message : 'No fue posible consultar las categorías.');
       })
       .finally(() => {
         if (!active || !mountedRef.current) return;
@@ -182,6 +193,16 @@ export default function NewReportScreen() {
     if ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken) return Alert.alert('Verificación requerida', 'Confirma que eres una persona antes de enviar el reporte.');
     requestInFlight.current = true;
     setIsSubmitting(true);
+    const incidentId = Crypto.randomUUID();
+    const reportInput = {
+      incidentId,
+      categoryId: selectedCategory.id,
+      description,
+      location,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      evidence
+    };
     try {
       if (!isAuthenticated) {
         await signInAsGuest(captchaToken || undefined);
@@ -191,18 +212,26 @@ export default function NewReportScreen() {
         }
       }
       const incident = await createReport({
-        categoryId: selectedCategory.id,
-        description,
-        location,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        evidence,
+        ...reportInput,
         turnstileToken: protectedGuestFlow ? captchaToken : undefined
       });
       // Keep the identifier immediately, including for already queued submit handlers.
       createdIncidentRef.current = incident;
       if (mountedRef.current) setCreatedIncident(incident);
     } catch (error) {
+      if (!isGuest && Platform.OS !== 'web' && userId) {
+        const network = await NetInfo.fetch().catch(() => null);
+        if (!network?.isConnected || network.isInternetReachable === false) {
+          try {
+            const queued = await queueOfflineReport(userId, reportInput);
+            if (mountedRef.current) setQueuedIncident({ id: queued.id });
+            return;
+          } catch (queueError) {
+            if (mountedRef.current) Alert.alert('No fue posible guardar el reporte', queueError instanceof Error ? queueError.message : 'Intenta nuevamente.');
+            return;
+          }
+        }
+      }
       if (mountedRef.current) Alert.alert('No fue posible registrar el reporte', error instanceof Error ? error.message : 'Revisa los datos y la conexión antes de intentar nuevamente.');
     } finally {
       requestInFlight.current = false;
@@ -216,6 +245,20 @@ export default function NewReportScreen() {
   if (isLoading) return <LoadingState label="Verificando sesión..." />;
   if (isPasswordRecovery) return <Redirect href="/reset-password" />;
   if (isAuthenticated && role !== 'citizen') return <Redirect href="/(tabs)" />;
+
+  if (queuedIncident) return (
+    <ScrollView style={styles.scroll} contentContainerStyle={[styles.page, styles.confirmationPage]}>
+      <View style={styles.confirmationCard}>
+        <View style={styles.pendingSeal}><Ionicons name="cloud-offline-outline" size={34} color={colors.white} /></View>
+        <Text style={styles.confirmationEyebrow}>GUARDADO EN ESTE DISPOSITIVO</Text>
+        <Text style={styles.confirmationTitle}>Tu reporte está en cola</Text>
+        <Text style={styles.confirmationCopy}>ZacApp conservará los datos y las fotografías. Se enviará automáticamente cuando el teléfono recupere conexión a Internet.</Text>
+        <View style={styles.privacyNote}><Ionicons name="phone-portrait-outline" size={18} color={colors.secondary} /><Text style={styles.privacyText}>No desinstales ZacApp ni borres sus datos antes de que finalice la sincronización.</Text></View>
+        <AppButton label="Ver mis reportes" icon="list-outline" onPress={() => router.replace('/(tabs)/tracking')} />
+        <AppButton label="Volver al inicio" variant="ghost" icon="home-outline" onPress={() => router.replace('/(tabs)')} />
+      </View>
+    </ScrollView>
+  );
 
   if (createdIncident) return (
     <ScrollView style={styles.scroll} contentContainerStyle={[styles.page, styles.confirmationPage]}>
@@ -445,6 +488,7 @@ const styles = StyleSheet.create({
   confirmationPage: { minHeight: '100%', justifyContent: 'center' },
   confirmationCard: { width: '100%', backgroundColor: colors.white, borderRadius: 28, borderWidth: 1, borderColor: colors.border, padding: spacing.xl, alignItems: 'center', gap: spacing.md },
   successSeal: { width: 76, height: 76, borderRadius: 38, backgroundColor: colors.primary, borderWidth: 7, borderColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
+  pendingSeal: { width: 76, height: 76, borderRadius: 38, backgroundColor: colors.secondary, borderWidth: 7, borderColor: colors.softGreen, alignItems: 'center', justifyContent: 'center' },
   confirmationEyebrow: { color: colors.secondary, fontSize: 11, fontWeight: '900', letterSpacing: 1.3, marginTop: spacing.xs },
   confirmationTitle: { color: colors.primary, fontSize: 29, fontWeight: '900', textAlign: 'center' },
   confirmationCopy: { maxWidth: 480, color: colors.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' },

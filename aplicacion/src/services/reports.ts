@@ -6,7 +6,9 @@ import { reportReadScopeFor } from '@/services/sessionPolicy';
 import * as Crypto from 'expo-crypto';
 import { guestReportProtectionEnabled } from '@/lib/guestReportSecurity';
 
-type CreateReportInput = {
+export type CreateReportInput = {
+  incidentId?: string;
+  resumeOffline?: boolean;
   categoryId: number;
   description: string;
   location: string;
@@ -118,7 +120,7 @@ export async function listReportCategories(): Promise<ReportCategory[]> {
   return data ?? [];
 }
 
-export async function createReport({ categoryId, description, location, latitude, longitude, evidence, turnstileToken }: CreateReportInput) {
+export async function createReport({ incidentId: requestedIncidentId, resumeOffline = false, categoryId, description, location, latitude, longitude, evidence, turnstileToken }: CreateReportInput) {
   if (!supabase) throw new Error('Supabase no está configurado.');
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -132,7 +134,16 @@ export async function createReport({ categoryId, description, location, latitude
     throw new Error('Adjunta entre una y cinco fotografías JPEG.');
   }
 
-  const incidentId = Crypto.randomUUID();
+  const incidentId = requestedIncidentId ?? Crypto.randomUUID();
+  if (requestedIncidentId && resumeOffline && !isGuest) {
+    const { data: existing, error: existingError } = await supabase
+      .from('incidents')
+      .select('id, code')
+      .eq('id', incidentId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) return existing as { id: string; code: string };
+  }
   const departmentCode = await categoryStorageCode(categoryId);
   if (verifyGuestReport) {
     try {
@@ -161,7 +172,10 @@ export async function createReport({ categoryId, description, location, latitude
         .upload(storagePath, fileData, {
           contentType: item.mimeType,
           cacheControl: '3600',
-          upsert: false
+          // A registered offline report may resume after the server accepted a
+          // file but the device lost the response. Its deterministic path makes
+          // this retry safe and prevents orphaned duplicates.
+          upsert: Boolean(requestedIncidentId && resumeOffline && !isGuest)
         });
       if (uploadError) throw uploadError;
       uploadedPaths.push(storagePath);
