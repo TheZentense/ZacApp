@@ -36,8 +36,8 @@ type SessionContextValue = {
   disableBiometrics: () => Promise<void>;
   signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signInAsGuest: (captchaToken?: string) => Promise<void>;
-  linkGuestEmail: (name: string, email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string, captchaToken?: string) => Promise<boolean>;
+  linkGuestEmail: (name: string, email: string, password: string, emailRedirectTo?: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string, captchaToken?: string, emailRedirectTo?: string) => Promise<boolean>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string, redirectTo: string, captchaToken?: string) => Promise<void>;
   completePasswordRecovery: (newPassword: string) => Promise<void>;
@@ -411,7 +411,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           authActionRef.current = false;
         }
       },
-      linkGuestEmail: async (name: string, value: string, password: string) => {
+      linkGuestEmail: async (name: string, value: string, password: string, emailRedirectTo?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         if (sessionError || !sessionData.session?.user?.is_anonymous) throw new Error('anonymous session required');
@@ -421,7 +421,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             email: value.trim().toLowerCase(),
             password,
             data: { full_name: name.trim() }
-          });
+          }, emailRedirectTo ? { emailRedirectTo } : undefined);
           if (error) throw error;
           if (!await hydrateIdentity(data.user)) {
             await signOutLocal();
@@ -432,14 +432,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           authActionRef.current = false;
         }
       },
-      signUp: async (name: string, value: string, password: string, captchaToken?: string) => {
+      signUp: async (name: string, value: string, password: string, captchaToken?: string, emailRedirectTo?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         authActionRef.current = true;
         try {
           const { data, error } = await supabase.auth.signUp({
             email: value.trim().toLowerCase(),
             password,
-            options: { data: { full_name: name.trim(), role: 'citizen' }, ...(captchaToken ? { captchaToken } : {}) }
+            options: {
+              data: { full_name: name.trim(), role: 'citizen' },
+              ...(captchaToken ? { captchaToken } : {}),
+              ...(emailRedirectTo ? { emailRedirectTo } : {})
+            }
           });
           if (error) throw error;
           if (data.session?.user && !await hydrateIdentity(data.session.user)) {

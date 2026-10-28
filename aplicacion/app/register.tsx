@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
@@ -38,6 +39,7 @@ export default function RegisterScreen() {
   const { signUp, linkGuestEmail, isAuthenticated, isGuest, isLoading } = useSession();
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
   const captchaRequired = Boolean(captchaSiteKey);
+  const emailRedirectTo = Linking.createURL('/login');
   const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   if (!isLoading && isAuthenticated && !isGuest) return <Redirect href="/(tabs)" />;
@@ -67,14 +69,14 @@ export default function RegisterScreen() {
     setIsSubmitting(true);
     try {
       if (isGuest) {
-        await linkGuestEmail(name, email, password);
+        await linkGuestEmail(name, email, password, emailRedirectTo);
         setPendingEmail(email.trim().toLowerCase());
         setPassword('');
         setConfirmation('');
         setNotice('Enviamos un enlace para confirmar tu correo. Al confirmarlo, podrás ingresar con este correo y la contraseña que acabas de crear, conservando el seguimiento de tus reportes.');
         return;
       }
-      const hasSession = await signUp(name, email, password, captchaToken || undefined);
+      const hasSession = await signUp(name, email, password, captchaToken || undefined, emailRedirectTo);
       setPassword('');
       setConfirmation('');
       if (hasSession) {
@@ -106,7 +108,11 @@ export default function RegisterScreen() {
     resendAvailableAt.current = Date.now() + 60_000;
     try {
       if (!supabase) throw new Error('Supabase no está configurado.');
-      const { error } = await supabase.auth.resend({ type: 'signup', email: pendingEmail });
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: pendingEmail,
+        options: { emailRedirectTo }
+      });
       if (error) throw error;
       setNotice('Solicitud de confirmación recibida. Si corresponde confirmar este correo, recibirás un enlace. Revisa tu bandeja de entrada y spam; después de confirmar, vuelve a iniciar sesión.');
     } catch (error) {
