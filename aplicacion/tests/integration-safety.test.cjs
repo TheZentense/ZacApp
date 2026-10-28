@@ -2517,6 +2517,7 @@ test('biometric APK stays separate and refuses an unverified Supabase or enabled
   assert.equal(eas.build['biometric-test'].env.ZACAPP_BUILD_VARIANT, 'biometric-test');
   assert.equal(eas.build['biometric-test'].env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED, 'false');
   assert.equal(eas.build.preview.distribution, 'internal');
+  assert.equal(eas.build.preview.autoIncrement, true);
   assert.equal(eas.build.preview.android.buildType, 'apk');
   const names = ['ZACAPP_BUILD_VARIANT', 'EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY', 'EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED'];
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
