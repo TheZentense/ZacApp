@@ -1917,6 +1917,58 @@ test('citizen confirmation resend and recovery preserve the ZacApp return route'
   assert.match(session, /resetPasswordForEmail[\s\S]*redirectTo/);
 });
 
+test('Android auth callback parser supports PKCE and implicit Supabase links', () => {
+  const { parseAuthCallback } = loader()('src/services/authDeepLink.ts');
+  assert.deepEqual(
+    { ...parseAuthCallback('zacapp://login?code=pkce-code&type=signup') },
+    { code: 'pkce-code', type: 'signup', accessToken: undefined, error: undefined, refreshToken: undefined }
+  );
+  assert.deepEqual(
+    { ...parseAuthCallback('zacapp://reset-password#access_token=access-value&refresh_token=refresh-value&type=recovery') },
+    { accessToken: 'access-value', refreshToken: 'refresh-value', type: 'recovery', code: undefined, error: undefined }
+  );
+  assert.equal(parseAuthCallback('zacapp://login?screen=profile'), null);
+});
+
+test('Android auth callback exchanges only the credential format supplied by Supabase', async () => {
+  const { consumeAuthDeepLink } = loader()('src/services/authDeepLink.ts');
+  const calls = [];
+  const client = {
+    auth: {
+      exchangeCodeForSession: async (code) => { calls.push(['exchange', code]); return { error: null }; },
+      setSession: async (session) => { calls.push(['session', session]); return { error: null }; }
+    }
+  };
+  assert.deepEqual(
+    { ...(await consumeAuthDeepLink(client, 'zacapp://login?code=one-time&type=signup')) },
+    { handled: true, type: 'signup' }
+  );
+  assert.deepEqual(
+    { ...(await consumeAuthDeepLink(client, 'zacapp://reset#access_token=access&refresh_token=refresh&type=recovery')) },
+    { handled: true, type: 'recovery' }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['exchange', 'one-time'],
+    ['session', { access_token: 'access', refresh_token: 'refresh' }]
+  ]);
+});
+
+test('Android auth callback rejects provider errors without changing the session', async () => {
+  const { consumeAuthDeepLink } = loader()('src/services/authDeepLink.ts');
+  let authCalls = 0;
+  const client = {
+    auth: {
+      exchangeCodeForSession: async () => { authCalls += 1; return { error: null }; },
+      setSession: async () => { authCalls += 1; return { error: null }; }
+    }
+  };
+  await assert.rejects(
+    consumeAuthDeepLink(client, 'zacapp://login#error=access_denied&error_description=Enlace%20vencido'),
+    /Enlace vencido/
+  );
+  assert.equal(authCalls, 0);
+});
+
 test('Android auth storage migrates a legacy token only after encryption succeeds', async () => {
   const legacy = new Map([['sb-local-auth-token', 'session-token']]);
   const secured = new Map();

@@ -1,11 +1,13 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Linking from 'expo-linking';
 import { AppState, Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import { clearBiometricAccess, enableBiometricAccess, hasStrongBiometrics, isBiometricEnabledFor, verifyBiometricAccess } from '@/lib/biometricAccess';
 import type { UserRole as DatabaseRole } from '@/types/domain';
 import { isDatabaseRole, visualRoleFor } from '@/services/sessionPolicy';
+import { consumeAuthDeepLink } from '@/services/authDeepLink';
 
 export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 const BACKGROUND_AT_KEY = '@zacapp/security/background-at';
@@ -274,6 +276,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     return () => { cancelled = true; data.subscription.unsubscribe(); };
   }, [hydrateIdentity, lockRegisteredSession, signOutLocal]);
+
+  useEffect(() => {
+    const client = supabase;
+    if (Platform.OS !== 'android' || !client) return;
+    let active = true;
+    const handleUrl = async (url: string | null) => {
+      if (!url || !active) return;
+      try {
+        const result = await consumeAuthDeepLink(client, url);
+        if (active && result.handled && result.type === 'recovery') {
+          recoveryRef.current = true;
+          setIsPasswordRecovery(true);
+        }
+      } catch {
+        if (active) setProfileError('El enlace de acceso no es válido o ya venció. Solicita uno nuevo.');
+      }
+    };
+    void Linking.getInitialURL().then(handleUrl);
+    const linkingSubscription = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
+    return () => { active = false; linkingSubscription.remove(); };
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !supabase) return;
