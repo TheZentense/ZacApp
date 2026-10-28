@@ -1901,16 +1901,16 @@ test('Turnstile protects every public authentication entry without exposing its 
   assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
 });
 
-test('citizen confirmation resend and recovery preserve the ZacApp return route', () => {
+test('citizen registration starts immediately while password recovery preserves the ZacApp return route', () => {
   const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
   const session = read('src/context/SessionContext.tsx');
   const register = read('app/register.tsx');
   const recovery = read('app/forgot-password.tsx');
 
-  assert.match(register, /Linking\.createURL\('\/login'\)/);
-  assert.match(register, /linkGuestEmail\(name, email, password, emailRedirectTo\)/);
-  assert.match(register, /signUp\(name, email, password, captchaToken \|\| undefined, emailRedirectTo\)/);
-  assert.match(register, /supabase\.auth\.resend\([\s\S]*options: \{ emailRedirectTo \}/);
+  assert.match(register, /linkGuestEmail\(name, email, password\)/);
+  assert.match(register, /signUp\(name, email, password, captchaToken \|\| undefined\)/);
+  assert.match(register, /router\.replace\('\/(?:\(tabs\)|reports)'\)/);
+  assert.doesNotMatch(register, /auth\.resend|Reenviar correo de confirmaci[oó]n/);
   assert.match(session, /updateUser\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : undefined/);
   assert.match(session, /supabase\.auth\.signUp\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : \{\}/);
   assert.match(recovery, /Linking\.createURL\('\/reset-password'\)/);
