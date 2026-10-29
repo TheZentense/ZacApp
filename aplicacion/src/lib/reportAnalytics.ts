@@ -1,6 +1,6 @@
 import type { Incident } from '@/types/domain';
 
-export type AnalyticsPeriod = '30D' | '90D' | 'YEAR' | 'ALL';
+export type AnalyticsPeriod = 'TODAY' | 'MONTH' | '90D' | 'YEAR' | 'ALL';
 export type AnalyticsStatus = 'ALL' | 'ACTIVE' | 'CLOSED';
 
 export type AnalyticsFilters = {
@@ -15,8 +15,8 @@ export type CountItem = { label: string; value: number };
 const closedStatuses = new Set(['CERRADO', 'RECHAZADO']);
 
 function periodStart(period: AnalyticsPeriod, now: Date) {
-  if (period === 'ALL') return null;
-  const days = period === '30D' ? 30 : period === '90D' ? 90 : 365;
+  if (period === 'ALL' || period === 'TODAY' || period === 'MONTH') return null;
+  const days = period === '90D' ? 90 : 365;
   const start = new Date(now);
   start.setDate(start.getDate() - days);
   return start;
@@ -24,9 +24,16 @@ function periodStart(period: AnalyticsPeriod, now: Date) {
 
 export function filterAnalyticsIncidents(incidents: Incident[], filters: AnalyticsFilters, now = new Date()) {
   const start = periodStart(filters.period, now);
+  const dateKey = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guatemala', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  const todayKey = dateKey(now);
+  const monthKey = todayKey.slice(0, 7);
   return incidents.filter((incident) => {
     const createdAt = new Date(incident.createdAt);
-    if (start && (!Number.isFinite(createdAt.getTime()) || createdAt < start)) return false;
+    if (!Number.isFinite(createdAt.getTime())) return false;
+    const incidentDateKey = dateKey(createdAt);
+    if (filters.period === 'TODAY' && incidentDateKey !== todayKey) return false;
+    if (filters.period === 'MONTH' && !incidentDateKey.startsWith(monthKey)) return false;
+    if (start && createdAt < start) return false;
     if (filters.department !== 'ALL' && incident.department !== filters.department) return false;
     if (filters.category !== 'ALL' && incident.category !== filters.category) return false;
     if (filters.status === 'ACTIVE' && closedStatuses.has(incident.status)) return false;

@@ -20,6 +20,18 @@ test('analytics combines period, department, category and status filters', () =>
   assert.match(analytics, /category: string/);
   assert.match(analytics, /status: AnalyticsStatus/);
   assert.match(screen, /filterAnalyticsIncidents\(incidents, filters\)/);
+  assert.match(screen, /Hoy/);
+  assert.match(screen, /Este mes/);
+  assert.match(screen, /3 meses/);
+  assert.match(screen, /1 año/);
+});
+
+test('analytics can export a filtered detail and print the summary or only the map', () => {
+  assert.match(screen, /Imprimir resumen/);
+  assert.match(screen, /Exportar detalle/);
+  assert.match(screen, /Imprimir mapa/);
+  assert.match(screen, /exportAnalyticsDetail\(filtered, exportTitle\)/);
+  assert.match(screen, /nativeID="analytics-map-section"/);
 });
 
 test('analytics exposes summaries, rankings, trends and the authorized heatmap', () => {

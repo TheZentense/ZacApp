@@ -8,9 +8,11 @@ import { useReports } from '@/hooks/useReports';
 import { useSession } from '@/context/SessionContext';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { analyticsSummary, countBy, filterAnalyticsIncidents, monthlyTrend, type AnalyticsFilters, type AnalyticsPeriod, type AnalyticsStatus, type CountItem } from '@/lib/reportAnalytics';
+import { exportAnalyticsDetail, printAnalyticsMap, printAnalyticsSummary } from '@/lib/analyticsExport';
 
 const periods: { value: AnalyticsPeriod; label: string }[] = [
-  { value: '30D', label: '30 días' },
+  { value: 'TODAY', label: 'Hoy' },
+  { value: 'MONTH', label: 'Este mes' },
   { value: '90D', label: '3 meses' },
   { value: 'YEAR', label: '1 año' },
   { value: 'ALL', label: 'Histórico' }
@@ -39,7 +41,7 @@ export default function AdminAnalyticsScreen() {
   const { width } = useWindowDimensions();
   const { databaseRole } = useSession();
   const { incidents, isLoading, error, reload } = useReports();
-  const [filters, setFilters] = useState<AnalyticsFilters>({ period: '90D', department: 'ALL', category: 'ALL', status: 'ALL' });
+  const [filters, setFilters] = useState<AnalyticsFilters>({ period: 'MONTH', department: 'ALL', category: 'ALL', status: 'ALL' });
   const departments = useMemo(() => Array.from(new Set(incidents.map((item) => item.department).filter(Boolean))).sort(), [incidents]);
   const categories = useMemo(() => Array.from(new Set(incidents.map((item) => item.category).filter(Boolean))).sort(), [incidents]);
   const filtered = useMemo(() => filterAnalyticsIncidents(incidents, filters), [filters, incidents]);
@@ -52,7 +54,11 @@ export default function AdminAnalyticsScreen() {
   if (databaseRole !== 'administrador') return <Redirect href="/(tabs)" />;
 
   const updateFilter = <K extends keyof AnalyticsFilters>(key: K, value: AnalyticsFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
-  const resetFilters = () => setFilters({ period: '90D', department: 'ALL', category: 'ALL', status: 'ALL' });
+  const resetFilters = () => setFilters({ period: 'MONTH', department: 'ALL', category: 'ALL', status: 'ALL' });
+  const periodLabel = periods.find((item) => item.value === filters.period)?.label ?? 'Periodo';
+  const departmentLabel = filters.department === 'ALL' ? 'Todos los departamentos' : filters.department;
+  const categoryLabel = filters.category === 'ALL' ? 'Todas las categorías' : filters.category;
+  const exportTitle = `ZacApp - ${periodLabel} - ${departmentLabel} - ${categoryLabel}`;
 
   return <ScrollView style={styles.scroll} contentContainerStyle={styles.page}>
     <View style={styles.hero}>
@@ -66,6 +72,11 @@ export default function AdminAnalyticsScreen() {
       <Text style={styles.filterLabel}>Estado</Text><FilterChips values={statusOptions} selected={filters.status} onSelect={(value) => updateFilter('status', value)} />
       <Text style={styles.filterLabel}>Departamento</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalChips}><FilterChips values={[{ value: 'ALL', label: 'Todos' }, ...departments.map((value) => ({ value, label: value }))]} selected={filters.department} onSelect={(value) => updateFilter('department', value)} /></ScrollView>
       <Text style={styles.filterLabel}>Tipo de incidente</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalChips}><FilterChips values={[{ value: 'ALL', label: 'Todos' }, ...categories.map((value) => ({ value, label: value }))]} selected={filters.category} onSelect={(value) => updateFilter('category', value)} /></ScrollView>
+      <View style={styles.exportActions}>
+        <Pressable style={styles.primaryAction} onPress={() => void printAnalyticsSummary()}><Ionicons name="print-outline" size={18} color={colors.white} /><Text style={styles.primaryActionText}>Imprimir resumen</Text></Pressable>
+        <Pressable style={styles.secondaryAction} onPress={() => void exportAnalyticsDetail(filtered, exportTitle)}><Ionicons name="download-outline" size={18} color={colors.primary} /><Text style={styles.secondaryActionText}>Exportar detalle</Text></Pressable>
+        <Pressable disabled={!summary.located} style={[styles.secondaryAction, !summary.located && styles.disabledAction]} onPress={() => void printAnalyticsMap()}><Ionicons name="map-outline" size={18} color={colors.primary} /><Text style={styles.secondaryActionText}>Imprimir mapa</Text></Pressable>
+      </View>
     </View>
 
     {isLoading ? <LoadingState label="Preparando indicadores..." /> : error ? <ErrorState description={error} onRetry={() => void reload()} /> : <>
@@ -82,7 +93,7 @@ export default function AdminAnalyticsScreen() {
         <View style={styles.analyticsColumn}><BarList title="Carga por departamento" subtitle="Cantidad de reportes canalizados por área." items={departmentCounts} color={colors.secondary} /></View>
       </View>
       <BarList title="Tendencia de los últimos seis meses" subtitle="Evolución mensual de los incidentes visibles." items={trend} color={colors.warning} />
-      {summary.located ? <IncidentHeatmap incidents={filtered} /> : <View style={styles.panel}><Text style={styles.panelTitle}>Concentración geográfica</Text><Text style={styles.emptyText}>Los reportes filtrados no contienen coordenadas disponibles.</Text></View>}
+      <View nativeID="analytics-map-section">{summary.located ? <IncidentHeatmap incidents={filtered} /> : <View style={styles.panel}><Text style={styles.panelTitle}>Concentración geográfica</Text><Text style={styles.emptyText}>Los reportes filtrados no contienen coordenadas disponibles.</Text></View>}</View>
     </>}
   </ScrollView>;
 }
@@ -114,6 +125,12 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { color: colors.text, fontSize: 12, fontWeight: '800' },
   chipTextActive: { color: colors.white },
+  exportActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
+  primaryAction: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.primary, paddingHorizontal: spacing.lg },
+  primaryActionText: { color: colors.white, fontSize: 12, fontWeight: '900' },
+  secondaryAction: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg },
+  secondaryActionText: { color: colors.primary, fontSize: 12, fontWeight: '900' },
+  disabledAction: { opacity: 0.45 },
   metrics: { gap: spacing.sm },
   metricsWide: { flexDirection: 'row', flexWrap: 'wrap' },
   metric: { flex: 1, minWidth: 175, backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.xs },
