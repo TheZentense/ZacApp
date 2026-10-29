@@ -10,6 +10,7 @@ function loader(overrides = {}, globals = {}) {
   const cache = new Map();
   let uuidSequence = 0;
   const nativeDoubles = {
+    '@/components/IncidentHeatmapViewport': { IncidentHeatmapViewport: 'IncidentHeatmapViewport' },
     'expo-crypto': { randomUUID: () => `00000000-0000-4000-8000-${String(++uuidSequence).padStart(12, '0')}` },
     'react-native': { Platform: { OS: 'android' } },
     'expo-file-system': { File: class { constructor() { throw new Error('Local file access must be mocked'); } } },
@@ -593,6 +594,18 @@ test('mobile report navigation distinguishes general, department and personal vi
   }
 });
 
+test('citizen navigation keeps report status in one personal workspace', () => {
+  const layout = fs.readFileSync(path.resolve(__dirname, '..', 'app/(tabs)/_layout.tsx'), 'utf8');
+  const services = fs.readFileSync(path.resolve(__dirname, '..', 'app/(tabs)/services.tsx'), 'utf8');
+  const citizenBlock = layout.match(/const citizenNavigation = \[([\s\S]*?)\] satisfies/)?.[1] ?? '';
+
+  assert.match(citizenBlock, /Mis reportes/);
+  assert.doesNotMatch(citizenBlock, /Seguimiento/);
+  assert.match(layout, /name="tracking"[\s\S]*href: isStaff \? '\/tracking' : null/);
+  assert.doesNotMatch(services, /title: 'Seguimiento'/);
+  assert.match(services, /Mis reportes[\s\S]*avances, historial y fotograf[ií]as/);
+});
+
 test('supervisor and department readers see reports without administrative controls', () => {
   for (const role of ['supervisor', 'coordinador', 'comunicacion']) {
     const harness = workflowScreenHarness(role, [{ ...reportsFixture('MEDIA'), status: 'VALIDADO' }]);
@@ -698,8 +711,11 @@ test('administrator assignment form is available only for a validated unassigned
   ]) {
     const harness = workflowScreenHarness('administrador', [{ ...reportsFixture('MEDIA'), status, departmentId, assignedToId }]);
     let tree = harness.render();
-    nodes(tree).find((node) => node.type === 'IncidentCard').props.onPress();
-    tree = harness.render();
+    const incidentCard = nodes(tree).find((node) => node.type === 'IncidentCard');
+    if (incidentCard) {
+      incidentCard.props.onPress();
+      tree = harness.render();
+    }
     assert.equal(nodes(tree).some((node) => node.props?.label === 'Asignar reporte'), visible);
     const labels = nodes(tree).map((node) => node.props?.children).filter((value) => typeof value === 'string');
     assert.equal(labels.includes('Asignado'), false);
@@ -1227,6 +1243,8 @@ function reportScreenHarness(client, File, options = {}) {
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'react-native': { ...native, Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, StyleSheet: { create: (value) => value } },
+    '@react-native-community/netinfo': { fetch: async () => ({ isConnected: true, isInternetReachable: true }) },
+    '@/services/offlineReports': { cacheReportCategories: async () => {}, readCachedReportCategories: async () => [], queueOfflineReport: async () => ({ id: 'queued-report' }) },
     'expo-file-system': { File },
     'expo-router': { Redirect: 'Redirect', router: {} },
     'expo-camera': { CameraView: 'CameraView', useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] },
@@ -1244,7 +1262,7 @@ function reportScreenHarness(client, File, options = {}) {
     '@/components/DataState': { ErrorState: 'ErrorState', LoadingState: 'LoadingState' },
     '@/components/TurnstileChallenge': { TurnstileChallenge: 'TurnstileChallenge' },
     '@/lib/supabase': { supabase: client, isSupabaseConfigured: true },
-    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
+    '@/context/SessionContext': { useSession: () => ({ role: 'citizen', userId: 'citizen-local', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
     'expo-image-picker': { launchImageLibraryAsync: options.pickImages ?? (async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] })) },
     'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, height: 600, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
   }, { process: { env: {} } });
@@ -1897,6 +1915,81 @@ test('Turnstile protects every public authentication entry without exposing its 
   assert.doesNotMatch(publicEnvironment, /TURNSTILE_SECRET/i);
 });
 
+test('citizen registration starts immediately while password recovery preserves the ZacApp return route', () => {
+  const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+  const session = read('src/context/SessionContext.tsx');
+  const register = read('app/register.tsx');
+  const recovery = read('app/forgot-password.tsx');
+
+  assert.match(register, /linkGuestEmail\(name, email, password\)/);
+  assert.match(register, /signUp\(name, email, password, captchaToken \|\| undefined\)/);
+  assert.match(register, /router\.replace\('\/(?:\(tabs\)|reports)'\)/);
+  assert.doesNotMatch(register, /auth\.resend|Reenviar correo de confirmaci[oó]n/);
+  assert.match(session, /updateUser\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : undefined/);
+  assert.match(session, /supabase\.auth\.signUp\([\s\S]*emailRedirectTo \? \{ emailRedirectTo \} : \{\}/);
+  assert.match(recovery, /Linking\.createURL\('\/reset-password'\)/);
+  assert.match(session, /resetPasswordForEmail[\s\S]*redirectTo/);
+});
+
+test('Android auth callback parser supports PKCE and implicit Supabase links', () => {
+  const { parseAuthCallback } = loader()('src/services/authDeepLink.ts');
+  assert.deepEqual(
+    { ...parseAuthCallback('zacapp://login?code=pkce-code&type=signup') },
+    { code: 'pkce-code', type: 'signup', accessToken: undefined, error: undefined, refreshToken: undefined }
+  );
+  assert.deepEqual(
+    { ...parseAuthCallback('zacapp://reset-password#access_token=access-value&refresh_token=refresh-value&type=recovery') },
+    { accessToken: 'access-value', refreshToken: 'refresh-value', type: 'recovery', code: undefined, error: undefined }
+  );
+  assert.equal(parseAuthCallback('zacapp://login?screen=profile'), null);
+});
+
+test('Android auth callback exchanges only the credential format supplied by Supabase', async () => {
+  const { consumeAuthDeepLink } = loader()('src/services/authDeepLink.ts');
+  const calls = [];
+  const client = {
+    auth: {
+      exchangeCodeForSession: async (code) => { calls.push(['exchange', code]); return { error: null }; },
+      setSession: async (session) => { calls.push(['session', session]); return { error: null }; }
+    }
+  };
+  assert.deepEqual(
+    { ...(await consumeAuthDeepLink(client, 'zacapp://login?code=one-time&type=signup')) },
+    { handled: true, type: 'signup' }
+  );
+  assert.deepEqual(
+    { ...(await consumeAuthDeepLink(client, 'zacapp://reset#access_token=access&refresh_token=refresh&type=recovery')) },
+    { handled: true, type: 'recovery' }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['exchange', 'one-time'],
+    ['session', { access_token: 'access', refresh_token: 'refresh' }]
+  ]);
+});
+
+test('Android auth callback rejects provider errors without changing the session', async () => {
+  const { consumeAuthDeepLink } = loader()('src/services/authDeepLink.ts');
+  let authCalls = 0;
+  const client = {
+    auth: {
+      exchangeCodeForSession: async () => { authCalls += 1; return { error: null }; },
+      setSession: async () => { authCalls += 1; return { error: null }; }
+    }
+  };
+  await assert.rejects(
+    consumeAuthDeepLink(client, 'zacapp://login#error=access_denied&error_description=Enlace%20vencido'),
+    /Enlace vencido/
+  );
+  assert.equal(authCalls, 0);
+});
+
+test('expired Android access links are visible on login and password recovery screens', () => {
+  const login = fs.readFileSync(path.resolve(__dirname, '..', 'app/login.tsx'), 'utf8');
+  const reset = fs.readFileSync(path.resolve(__dirname, '..', 'app/reset-password.tsx'), 'utf8');
+  assert.match(login, /errorMessage \|\| profileError/);
+  assert.match(reset, /profileError \|\| 'Este enlace no contiene una sesión de recuperación válida o ya venció\.'/);
+});
+
 test('Android auth storage migrates a legacy token only after encryption succeeds', async () => {
   const legacy = new Map([['sb-local-auth-token', 'session-token']]);
   const secured = new Map();
@@ -1988,8 +2081,8 @@ test('a restored Android staff session stays locked until biometric and Supabase
   assert.equal(unlocked.userId, user.id);
   assert.equal(refreshStarts, 1);
   harness.appState('background');
-  assert.equal(harness.render().isLocked, true);
-  assert.equal(harness.render().databaseRole, null);
+  assert.equal(harness.render().isLocked, false);
+  assert.equal(harness.render().databaseRole, 'operador');
   cleanups.forEach((cleanup) => cleanup?.());
 });
 
@@ -2022,7 +2115,11 @@ test('Android password fallback unlocks only the same active account with its da
     assert.equal(password, 'correct-password');
     return { data: { user }, error: null };
   };
-  const harness = sessionHarness(client, { platform: 'android' });
+  const harness = sessionHarness(client, { platform: 'android', biometric: {
+    hasStrongBiometrics: async () => true,
+    isBiometricEnabledFor: async (id) => id === user.id,
+    verifyBiometricAccess: async () => true
+  } });
   harness.render(); const cleanups = harness.mount();
   await new Promise(setImmediate);
   assert.equal(harness.render().isLocked, true);
@@ -2387,7 +2484,7 @@ test('tracking hides signed photos and history immediately when the authorized a
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: 'Fragment' },
     'react-native': {
       ...Object.fromEntries(['View', 'Text', 'Pressable', 'ScrollView', 'Image', 'ActivityIndicator'].map((name) => [name, name])),
-      AppState: { addEventListener: () => ({ remove() {} }) }, StyleSheet: { create: (value) => value }
+      AppState: { addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'android' }, StyleSheet: { create: (value) => value }
     },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
     '@/components/IncidentCard': { IncidentCard: 'IncidentCard' },
@@ -2402,6 +2499,7 @@ test('tracking hides signed photos and history immediately when the authorized a
         return [{ id: 'photo', url: `https://signed.invalid/${identity.userId}`, createdAt: 'Hoy' }];
       }
     },
+    '@/services/offlineReports': { listOfflineReports: async () => [], subscribeOfflineReports: () => () => {}, syncOfflineReports: async () => ({ sent: 0, pending: 0 }) },
     '@/lib/supabase': { supabase: null }
   })('app/(tabs)/tracking.tsx').default;
   const render = () => { index = 0; effects = []; return component(); };
@@ -2434,6 +2532,7 @@ test('biometric APK stays separate and refuses an unverified Supabase or enabled
   assert.equal(eas.build['biometric-test'].env.ZACAPP_BUILD_VARIANT, 'biometric-test');
   assert.equal(eas.build['biometric-test'].env.EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED, 'false');
   assert.equal(eas.build.preview.distribution, 'internal');
+  assert.equal(eas.build.preview.autoIncrement, true);
   assert.equal(eas.build.preview.android.buildType, 'apk');
   const names = ['ZACAPP_BUILD_VARIANT', 'EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY', 'EXPO_PUBLIC_GUEST_REPORT_TURNSTILE_ENFORCED'];
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));

@@ -15,7 +15,6 @@ type BottomTabBarProps = Parameters<NonNullable<ComponentProps<typeof Tabs>['tab
 const citizenNavigation = [
   { name: 'index', title: 'Inicio', icon: 'home-outline' },
   { name: 'reports', title: 'Mis reportes', icon: 'document-text-outline' },
-  { name: 'tracking', title: 'Seguimiento', icon: 'trail-sign-outline' },
   { name: 'services', title: 'Servicios', icon: 'apps-outline' },
   { name: 'profile', title: 'Perfil', icon: 'person-outline' }
 ] satisfies { name: string; title: string; icon: IconName }[];
@@ -180,7 +179,7 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="reports" options={{ tabBarLabel: isAdmin ? 'Reportes' : isMaintenance || departmentViewer ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', title: isAdmin ? 'Reportes' : isMaintenance || departmentViewer ? 'Reportes del departamento' : isEmployee ? 'Mis tareas' : 'Mis reportes', tabBarIcon: ({ color, size }) => <Ionicons name={isMaintenance ? 'clipboard-outline' : 'document-text-outline'} color={String(color)} size={size} /> }} />
-      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: departmentViewer ? 'Seguimiento del departamento' : isEmployee ? 'Seguimiento personal' : 'Seguimiento', tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={String(color)} size={size} /> }} />
+      <Tabs.Screen name="tracking" options={{ tabBarLabel: 'Seguimiento', title: departmentViewer ? 'Seguimiento del departamento' : isEmployee ? 'Seguimiento personal' : 'Seguimiento', href: isStaff ? '/tracking' : null, tabBarIcon: ({ color, size }) => <Ionicons name="trail-sign-outline" color={String(color)} size={size} /> }} />
       <Tabs.Screen name="index" options={{ title: isAdmin ? 'Panel' : isMaintenance || departmentViewer ? 'Departamento' : isEmployee ? 'Mis tareas' : 'Inicio', tabBarItemStyle: !isWeb ? styles.centerTabItem : undefined, tabBarIconStyle: !isWeb ? styles.centerTabIconSlot : undefined, tabBarLabelStyle: !isWeb ? styles.centerTabLabel : undefined, tabBarIcon: ({ size }) => !isWeb ? <View style={[styles.centerTabIcon, { backgroundColor: visual.primary }]}><Ionicons name={isAdmin ? 'grid' : isMaintenance ? 'construct' : isEmployee ? 'file-tray-full' : 'home'} color={colors.white} size={size + 1} /></View> : <Ionicons name={isAdmin ? 'grid-outline' : isMaintenance ? 'construct-outline' : isEmployee ? 'file-tray-full-outline' : 'home-outline'} color={visual.accent} size={size} /> }} />
       <Tabs.Screen name="services" options={{ title: 'Servicios', href: role === 'citizen' ? '/services' : null, tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" color={String(color)} size={size} /> }} />
       <Tabs.Screen name="admin-menu" options={{ title: 'Funciones', href: isStaff ? '/admin-menu' : null, tabBarIcon: ({ color, size }) => <Ionicons name="menu-outline" color={String(color)} size={size} /> }} />

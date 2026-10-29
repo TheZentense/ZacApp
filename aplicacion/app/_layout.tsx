@@ -4,6 +4,7 @@ import { colors } from '@/theme/tokens';
 import { SessionProvider, useSession } from '@/context/SessionContext';
 import { ReportsProvider } from '@/context/ReportsContext';
 import { SessionSecurityController } from '@/components/SessionSecurityController';
+import { OfflineReportSyncController } from '@/components/OfflineReportSyncController';
 import { BiometricLockScreen } from '@/components/BiometricLockScreen';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
@@ -13,6 +14,7 @@ function AppNavigation() {
   const privateAccess = !isSupabaseConfigured || (!isLoading && !isLocked && isAuthenticated);
   return <>
     <SessionSecurityController />
+    <OfflineReportSyncController />
     <ReportsProvider>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerStyle: { backgroundColor: colors.primary }, headerTintColor: colors.white }}>

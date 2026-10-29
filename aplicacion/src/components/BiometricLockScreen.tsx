@@ -1,22 +1,19 @@
 import { useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { useSession } from '@/context/SessionContext';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 export function BiometricLockScreen({ embedded = false }: { embedded?: boolean }) {
-  const { isLoading, isUnlocking, biometricEnabled, unlockWithBiometrics, unlockWithPassword, signOut } = useSession();
-  const [password, setPassword] = useState('');
+  const { isLoading, isUnlocking, biometricEnabled, unlockWithBiometrics, signOut } = useSession();
   const [error, setError] = useState('');
+  const [switchingAccount, setSwitchingAccount] = useState(false);
 
-  const unlock = async (method: 'biometric' | 'password') => {
+  const unlock = async () => {
     setError('');
     try {
-      if (method === 'biometric') await unlockWithBiometrics();
-      else {
-        await unlockWithPassword(password);
-        setPassword('');
-      }
+      await unlockWithBiometrics();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : '';
       if (/invalid login credentials/i.test(message)) setError('La contraseña no es correcta.');
@@ -25,21 +22,32 @@ export function BiometricLockScreen({ embedded = false }: { embedded?: boolean }
     }
   };
 
+  const returnToLogin = async () => {
+    if (switchingAccount) return;
+    setSwitchingAccount(true);
+    setError('');
+    try {
+      await signOut();
+      router.replace('/login');
+    } catch {
+      setError('No fue posible cerrar la sesión local. Inténtalo nuevamente.');
+    } finally {
+      setSwitchingAccount(false);
+    }
+  };
+
   return (
-    <KeyboardAvoidingView style={embedded ? styles.embeddedPage : styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={embedded ? styles.embeddedPage : styles.page}>
       <View style={styles.card}>
         {isLoading ? <ActivityIndicator color={colors.primary} size="large" /> : <>
           <Text style={styles.title}>ZacApp bloqueada</Text>
           <Text style={styles.copy}>Verifica tu identidad para continuar con la sesión guardada en este dispositivo.</Text>
-          {biometricEnabled && <AppButton label={isUnlocking ? 'Verificando...' : 'Desbloquear con biometría'} icon="finger-print-outline" disabled={isUnlocking} onPress={() => { void unlock('biometric'); }} />}
-          <Text style={styles.label}>Contraseña de la cuenta</Text>
-          <TextInput accessibilityLabel="Contraseña de la cuenta" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete="off" editable={!isUnlocking} style={styles.input} placeholder="Contraseña" placeholderTextColor={colors.muted} onSubmitEditing={() => { void unlock('password'); }} />
-          <AppButton label={isUnlocking ? 'Verificando...' : 'Ingresar con contraseña'} icon="key-outline" disabled={isUnlocking || !password} onPress={() => { void unlock('password'); }} />
+          {biometricEnabled && <AppButton label={isUnlocking ? 'Verificando...' : 'Desbloquear con biometría'} icon="finger-print-outline" disabled={isUnlocking || switchingAccount} onPress={() => { void unlock(); }} />}
           {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-          <AppButton label="Cambiar de cuenta" variant="ghost" icon="log-out-outline" disabled={isUnlocking} onPress={() => { void signOut(); }} />
+          <AppButton label={switchingAccount ? 'Saliendo...' : 'Usar contraseña o cambiar de cuenta'} variant="ghost" icon="log-out-outline" disabled={isUnlocking || switchingAccount} onPress={() => { void returnToLogin(); }} />
         </>}
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -49,7 +57,5 @@ const styles = StyleSheet.create({
   card: { width: '100%', maxWidth: 440, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.md, borderWidth: 1, borderColor: colors.border },
   title: { fontSize: 25, fontWeight: '800', color: colors.text },
   copy: { color: colors.secondary, lineHeight: 21 },
-  label: { color: colors.text, fontWeight: '700' },
-  input: { minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text },
   error: { color: colors.danger, fontWeight: '700' }
 });

@@ -8,7 +8,7 @@ Aplicación multiplataforma orientada al registro, seguimiento y gestión de inc
 
 ---
 
-**React Native** · **Expo SDK 57** · **TypeScript** · **Supabase** · **PostgreSQL**
+**React Native** · **Expo SDK 58** · **TypeScript** · **Supabase** · **PostgreSQL**
 
 </div>
 
@@ -43,16 +43,16 @@ Instalar o tener instalado:
 - Node.js LTS
 - npm
 - Git
-- Expo Go compatible con SDK 57
+- Expo Go compatible con SDK 58
 - Navegador web actualizado
 - Android Studio, opcional para emulación local
 
 Versiones principales utilizadas por el proyecto:
 
 ```text
-Expo SDK: 57
-React Native: 0.86.3
-React: 19.2.3
+Expo SDK: 58
+React Native: 0.88.0
+React: 19.3.0
 TypeScript: 6
 ```
 
@@ -168,7 +168,7 @@ aplicacion/
 
 La versión actual incorpora:
 
-- Registro, confirmación de correo, inicio y cierre de sesión.
+- Registro ciudadano inmediato, inicio y cierre de sesión.
 - Recuperación y cambio de contraseña mediante Supabase Auth.
 - Navegación y paneles diferenciados por rol.
 - Registro ciudadano de incidentes con categoría, ubicación y fotografía.

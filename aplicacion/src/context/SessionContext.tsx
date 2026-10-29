@@ -1,11 +1,13 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Linking from 'expo-linking';
 import { AppState, Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import { clearBiometricAccess, enableBiometricAccess, hasStrongBiometrics, isBiometricEnabledFor, verifyBiometricAccess } from '@/lib/biometricAccess';
 import type { UserRole as DatabaseRole } from '@/types/domain';
 import { isDatabaseRole, visualRoleFor } from '@/services/sessionPolicy';
+import { consumeAuthDeepLink } from '@/services/authDeepLink';
 
 export type UserRole = 'citizen' | 'admin' | 'superadmin' | 'maintenance' | 'employee';
 const BACKGROUND_AT_KEY = '@zacapp/security/background-at';
@@ -36,8 +38,8 @@ type SessionContextValue = {
   disableBiometrics: () => Promise<void>;
   signIn: (email: string, password: string, captchaToken?: string) => Promise<void>;
   signInAsGuest: (captchaToken?: string) => Promise<void>;
-  linkGuestEmail: (name: string, email: string, password: string) => Promise<void>;
-  signUp: (name: string, email: string, password: string, captchaToken?: string) => Promise<boolean>;
+  linkGuestEmail: (name: string, email: string, password: string, emailRedirectTo?: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string, captchaToken?: string, emailRedirectTo?: string) => Promise<boolean>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   requestPasswordReset: (email: string, redirectTo: string, captchaToken?: string) => Promise<void>;
   completePasswordRecovery: (newPassword: string) => Promise<void>;
@@ -215,7 +217,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (backgroundAt && Date.now() - Number(backgroundAt) >= BACKGROUND_SESSION_LIMIT_MS) {
           await signOutLocal();
         } else {
-          await lockRegisteredSession(user);
+          await AsyncStorage.removeItem(BACKGROUND_AT_KEY);
+          if (await isBiometricEnabledFor(user.id)) await lockRegisteredSession(user);
+          else {
+            const isActive = await hydrateIdentity(user);
+            if (!isActive) await signOutLocal();
+            else client.auth.startAutoRefresh?.();
+          }
         }
       } else {
         const isActive = await hydrateIdentity(user);
@@ -270,11 +278,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [hydrateIdentity, lockRegisteredSession, signOutLocal]);
 
   useEffect(() => {
+    const client = supabase;
+    if (Platform.OS !== 'android' || !client) return;
+    let active = true;
+    const handleUrl = async (url: string | null) => {
+      if (!url || !active) return;
+      try {
+        const result = await consumeAuthDeepLink(client, url);
+        if (active && result.handled && result.type === 'recovery') {
+          recoveryRef.current = true;
+          setIsPasswordRecovery(true);
+        }
+      } catch {
+        if (active) setProfileError('El enlace de acceso no es válido o ya venció. Solicita uno nuevo.');
+      }
+    };
+    void Linking.getInitialURL().then(handleUrl);
+    const linkingSubscription = Linking.addEventListener('url', ({ url }) => { void handleUrl(url); });
+    return () => { active = false; linkingSubscription.remove(); };
+  }, []);
+
+  useEffect(() => {
     if (Platform.OS !== 'android' || !supabase) return;
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'background' && registeredUserRef.current && !isLocked) {
         void AsyncStorage.setItem(BACKGROUND_AT_KEY, String(Date.now()));
-        void lockRegisteredSession(registeredUserRef.current);
       } else if (nextState === 'active') {
         void (async () => {
           const backgroundAt = await AsyncStorage.getItem(BACKGROUND_AT_KEY);
@@ -406,7 +434,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           authActionRef.current = false;
         }
       },
-      linkGuestEmail: async (name: string, value: string, password: string) => {
+      linkGuestEmail: async (name: string, value: string, password: string, emailRedirectTo?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         if (sessionError || !sessionData.session?.user?.is_anonymous) throw new Error('anonymous session required');
@@ -416,7 +444,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             email: value.trim().toLowerCase(),
             password,
             data: { full_name: name.trim() }
-          });
+          }, emailRedirectTo ? { emailRedirectTo } : undefined);
           if (error) throw error;
           if (!await hydrateIdentity(data.user)) {
             await signOutLocal();
@@ -427,14 +455,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           authActionRef.current = false;
         }
       },
-      signUp: async (name: string, value: string, password: string, captchaToken?: string) => {
+      signUp: async (name: string, value: string, password: string, captchaToken?: string, emailRedirectTo?: string) => {
         if (!isSupabaseConfigured || !supabase) throw new Error('Supabase no está configurado.');
         authActionRef.current = true;
         try {
           const { data, error } = await supabase.auth.signUp({
             email: value.trim().toLowerCase(),
             password,
-            options: { data: { full_name: name.trim(), role: 'citizen' }, ...(captchaToken ? { captchaToken } : {}) }
+            options: {
+              data: { full_name: name.trim(), role: 'citizen' },
+              ...(captchaToken ? { captchaToken } : {}),
+              ...(emailRedirectTo ? { emailRedirectTo } : {})
+            }
           });
           if (error) throw error;
           if (data.session?.user && !await hydrateIdentity(data.session.user)) {

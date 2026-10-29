@@ -5,7 +5,6 @@ import { Redirect, router } from 'expo-router';
 import { AppButton } from '@/components/AppButton';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useSession } from '@/context/SessionContext';
-import { supabase } from '@/lib/supabase';
 import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 
 function registrationError(error: unknown): string {
@@ -27,14 +26,10 @@ export default function RegisterScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [notice, setNotice] = useState('');
-  const [pendingEmail, setPendingEmail] = useState('');
-  const [isResending, setIsResending] = useState(false);
   const [captchaToken, setCaptchaToken] = useState('');
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const requestInFlight = useRef(false);
-  const resendAvailableAt = useRef(0);
-  const isBusy = isSubmitting || isResending;
+  const isBusy = isSubmitting;
   const { signUp, linkGuestEmail, isAuthenticated, isGuest, isLoading } = useSession();
   const captchaSiteKey = process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? '';
   const captchaRequired = Boolean(captchaSiteKey);
@@ -43,7 +38,7 @@ export default function RegisterScreen() {
   if (!isLoading && isAuthenticated && !isGuest) return <Redirect href="/(tabs)" />;
 
   const submit = async () => {
-    if (requestInFlight.current || pendingEmail) return;
+    if (requestInFlight.current) return;
     if (!name.trim() || !email.trim() || !password || !confirmation) {
       setErrorMessage('Completa todos los campos para crear tu cuenta.');
       return;
@@ -63,15 +58,11 @@ export default function RegisterScreen() {
 
     requestInFlight.current = true;
     setErrorMessage('');
-    setNotice('');
     setIsSubmitting(true);
     try {
       if (isGuest) {
         await linkGuestEmail(name, email, password);
-        setPendingEmail(email.trim().toLowerCase());
-        setPassword('');
-        setConfirmation('');
-        setNotice('Enviamos un enlace para confirmar tu correo. Al confirmarlo, podrás ingresar con este correo y la contraseña que acabas de crear, conservando el seguimiento de tus reportes.');
+        router.replace('/reports');
         return;
       }
       const hasSession = await signUp(name, email, password, captchaToken || undefined);
@@ -80,9 +71,7 @@ export default function RegisterScreen() {
       if (hasSession) {
         router.replace('/(tabs)');
       } else {
-        setPendingEmail(email.trim().toLowerCase());
-        resendAvailableAt.current = Date.now() + 60_000;
-        setNotice('Solicitud de registro recibida. Si corresponde confirmar este correo, recibirás un enlace. Revisa tu bandeja de entrada y spam; abre el enlace y después vuelve a ZacApp para iniciar sesión. Si ya tienes una cuenta confirmada, puedes iniciar sesión.');
+        setErrorMessage('La cuenta fue creada, pero no fue posible iniciar la sesión. Vuelve al acceso e ingresa con tus datos.');
       }
     } catch (error) {
       setErrorMessage(registrationError(error));
@@ -90,30 +79,6 @@ export default function RegisterScreen() {
       requestInFlight.current = false;
       setIsSubmitting(false);
       if (!isGuest && captchaRequired) resetCaptcha();
-    }
-  };
-
-  const resendConfirmation = async () => {
-    if (requestInFlight.current || !pendingEmail) return;
-    setErrorMessage('');
-    if (Date.now() < resendAvailableAt.current) {
-      setErrorMessage('Espera al menos un minuto desde la última solicitud antes de reenviar el correo.');
-      return;
-    }
-    requestInFlight.current = true;
-    setIsResending(true);
-    setNotice('');
-    resendAvailableAt.current = Date.now() + 60_000;
-    try {
-      if (!supabase) throw new Error('Supabase no está configurado.');
-      const { error } = await supabase.auth.resend({ type: 'signup', email: pendingEmail });
-      if (error) throw error;
-      setNotice('Solicitud de confirmación recibida. Si corresponde confirmar este correo, recibirás un enlace. Revisa tu bandeja de entrada y spam; después de confirmar, vuelve a iniciar sesión.');
-    } catch (error) {
-      setErrorMessage(registrationError(error));
-    } finally {
-      requestInFlight.current = false;
-      setIsResending(false);
     }
   };
 
@@ -127,20 +92,19 @@ export default function RegisterScreen() {
           </View>
           <View style={styles.progress}><View style={styles.progressActive} /><View style={styles.progressInactive} /></View>
           <Text style={styles.label}>Nombre completo</Text>
-          <View style={styles.inputWithIcon}><Ionicons name="person-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy && !pendingEmail} style={styles.inlineInput} value={name} onChangeText={setName} placeholder="Nombre y apellidos" placeholderTextColor={colors.muted} /></View>
+          <View style={styles.inputWithIcon}><Ionicons name="person-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy} style={styles.inlineInput} value={name} onChangeText={setName} placeholder="Nombre y apellidos" placeholderTextColor={colors.muted} /></View>
           <Text style={styles.label}>Correo electrónico</Text>
-          <View style={styles.inputWithIcon}><Ionicons name="mail-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy} style={styles.inlineInput} value={email} onChangeText={(value) => { setEmail(value); setPendingEmail(''); setNotice(''); setErrorMessage(''); }} placeholder="correo@ejemplo.com" placeholderTextColor={colors.muted} autoCapitalize="none" keyboardType="email-address" /></View>
+          <View style={styles.inputWithIcon}><Ionicons name="mail-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy} style={styles.inlineInput} value={email} onChangeText={(value) => { setEmail(value); setErrorMessage(''); }} placeholder="correo@ejemplo.com" placeholderTextColor={colors.muted} autoCapitalize="none" keyboardType="email-address" /></View>
           <>
             <Text style={styles.label}>Contraseña</Text>
-            <View style={styles.inputWithIcon}><Ionicons name="lock-closed-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy && !pendingEmail} style={styles.inlineInput} value={password} onChangeText={setPassword} placeholder="Mínimo 8 caracteres" placeholderTextColor={colors.muted} secureTextEntry={!showPassword} /><Pressable accessibilityLabel={showPassword ? 'Ocultar contraseñas' : 'Mostrar contraseñas'} onPress={() => setShowPassword((value) => !value)} style={styles.eyeButton}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.secondary} /></Pressable></View>
+            <View style={styles.inputWithIcon}><Ionicons name="lock-closed-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy} style={styles.inlineInput} value={password} onChangeText={setPassword} placeholder="Mínimo 8 caracteres" placeholderTextColor={colors.muted} secureTextEntry={!showPassword} /><Pressable accessibilityLabel={showPassword ? 'Ocultar contraseñas' : 'Mostrar contraseñas'} onPress={() => setShowPassword((value) => !value)} style={styles.eyeButton}><Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.secondary} /></Pressable></View>
             <Text style={styles.label}>Confirmar contraseña</Text>
-            <View style={styles.inputWithIcon}><Ionicons name="checkmark-circle-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy && !pendingEmail} style={styles.inlineInput} value={confirmation} onChangeText={setConfirmation} placeholder="Repite la contraseña" placeholderTextColor={colors.muted} secureTextEntry={!showPassword} /></View>
+            <View style={styles.inputWithIcon}><Ionicons name="checkmark-circle-outline" size={19} color={colors.secondary} /><TextInput editable={!isBusy} style={styles.inlineInput} value={confirmation} onChangeText={setConfirmation} placeholder="Repite la contraseña" placeholderTextColor={colors.muted} secureTextEntry={!showPassword} /></View>
           </>
-          {notice ? <View style={styles.privacy}><Text accessibilityLiveRegion="polite" style={styles.privacyText}>{notice}</Text></View> : null}
           {errorMessage ? <View style={styles.errorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.danger} /><Text style={styles.errorText}>{errorMessage}</Text></View> : null}
           <View style={styles.privacy}><Ionicons name="shield-checkmark-outline" size={19} color={colors.secondary} /><Text style={styles.privacyText}>{isGuest ? 'El correo se vinculará a la misma identidad anónima para conservar sus reportes.' : 'La cuenta se crea únicamente con acceso ciudadano. Los roles internos los asigna la administración.'}</Text></View>
-          {!isGuest && !pendingEmail && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_registro" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
-          {pendingEmail && !isGuest ? <AppButton label={isResending ? 'Solicitando correo...' : 'Reenviar correo de confirmación'} icon="mail-outline" disabled={isBusy} onPress={resendConfirmation} /> : !pendingEmail ? <AppButton label={isSubmitting ? (isGuest ? 'Vinculando correo...' : 'Creando cuenta...') : (isGuest ? 'Conservar mis reportes' : 'Crear cuenta')} icon="person-add-outline" disabled={isBusy || (!isGuest && captchaRequired && !captchaToken)} onPress={submit} /> : null}
+          {!isGuest && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action="zacapp_registro" resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); setErrorMessage('No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
+          <AppButton label={isSubmitting ? (isGuest ? 'Vinculando correo...' : 'Creando cuenta...') : (isGuest ? 'Conservar mis reportes' : 'Crear cuenta')} icon="person-add-outline" disabled={isBusy || (!isGuest && captchaRequired && !captchaToken)} onPress={submit} />
           <AppButton label={isGuest ? 'Volver a mis reportes' : 'Volver a iniciar sesión'} variant="secondary" icon="arrow-back-outline" disabled={isBusy} onPress={() => router.replace(isGuest ? '/reports' : '/login')} />
         </View>
       </ScrollView>

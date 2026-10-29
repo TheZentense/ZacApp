@@ -8,12 +8,9 @@ type IconName = ComponentProps<typeof Ionicons>['name'];
 
 const services = [
   { title: 'Nuevo reporte', copy: 'Describe el caso y adjunta una fotografía.', icon: 'add-circle-outline', route: '/report/new' },
-  { title: 'Mis reportes', copy: 'Consulta los casos que has enviado.', icon: 'document-text-outline', route: '/reports' },
-  { title: 'Seguimiento', copy: 'Revisa avances, historial y fotografías.', icon: 'trail-sign-outline', route: '/tracking' },
-  { title: 'Estado del reporte', copy: 'Consulta en qué etapa está tu caso.', icon: 'git-branch-outline', route: '/tracking' },
+  { title: 'Mis reportes', copy: 'Consulta avances, historial y fotografías de los casos que has enviado.', icon: 'document-text-outline', route: '/reports' },
   { title: 'Mi cuenta', copy: 'Consulta los datos de tu perfil.', icon: 'person-outline', route: '/profile' },
-  { title: 'Actividad reciente', copy: 'Revisa tus reportes más recientes.', icon: 'pulse-outline', route: '/' }
-] satisfies { title: string; copy: string; icon: IconName; route: '/report/new' | '/reports' | '/tracking' | '/profile' | '/' }[];
+] satisfies { title: string; copy: string; icon: IconName; route: '/report/new' | '/reports' | '/profile' }[];
 
 export default function ServicesScreen() {
   return (
