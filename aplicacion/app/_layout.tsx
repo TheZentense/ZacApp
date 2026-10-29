@@ -30,6 +30,7 @@ function AppNavigation() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="admin/users" options={{ title: 'Administración de usuarios' }} />
           <Stack.Screen name="admin/catalogs" options={{ title: 'Categorías y departamentos' }} />
+          <Stack.Screen name="admin/analytics" options={{ title: 'Analítica municipal' }} />
         </Stack.Protected>
       </Stack>
       {(isLoading || (isLocked && !isPasswordRecovery && pathname !== '/login')) && <BiometricLockScreen />}
