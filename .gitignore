@@ -1,0 +1,38 @@
+# Dependencias y salidas generadas
+node_modules/
+.expo/
+dist/
+web-build/
+coverage/
+.codex-web-validation/
+
+# Configuración local y secretos
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+
+# Iniciadores y ejecutables locales
+*.bat
+*.cmd
+*.exe
+*.msi
+*.ps1
+
+# Configuración local de asistentes
+AGENTS.md
+.cursor/
+.codex/
+
+# Sistema operativo, editores y temporales
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.swp
+

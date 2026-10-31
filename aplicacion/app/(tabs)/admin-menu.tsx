@@ -9,6 +9,7 @@ const functions = [
   { title: 'Gestionar reportes', copy: 'Consultar y actualizar incidencias', icon: 'document-text-outline', route: '/reports' },
   { title: 'Seguimiento', copy: 'Revisar procesos y responsables', icon: 'trail-sign-outline', route: '/tracking' },
   { title: 'Asignaciones', copy: 'Distribuir reportes entre áreas y responsables', icon: 'git-branch-outline', route: '/reports' },
+  { title: 'Analítica municipal', copy: 'Explorar métricas, tendencias y concentración geográfica', icon: 'analytics-outline', route: '/admin/analytics' },
   { title: 'Panel operativo', copy: 'Consultar indicadores y carga departamental', icon: 'bar-chart-outline', route: '/' },
   { title: 'Usuarios y accesos', copy: 'Gestionar personal, estado y departamento', icon: 'people-outline', route: '/admin/users' },
   { title: 'Categorías y áreas', copy: 'Organizar incidencias y departamentos', icon: 'pricetags-outline', route: '/admin/catalogs' },
