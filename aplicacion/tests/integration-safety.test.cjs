@@ -1222,6 +1222,108 @@ test('web photographs retain the fetch path and enforce the same size limit', as
   }
 });
 
+function manualTimers() {
+  let nextId = 0;
+  const pending = new Map();
+  return {
+    setTimeout(callback, delay) { const id = ++nextId; pending.set(id, { callback, delay }); return id; },
+    clearTimeout(id) { pending.delete(id); },
+    fire(delay) {
+      const entry = [...pending].find(([, timer]) => timer.delay === delay);
+      assert.ok(entry, `Expected a ${delay} ms deadline`);
+      pending.delete(entry[0]);
+      entry[1].callback();
+    }
+  };
+}
+
+test('web GPS times out, retries with lower accuracy and ignores a late high-accuracy callback', async () => {
+  const timers = manualTimers();
+  const calls = [];
+  const navigator = { geolocation: { getCurrentPosition(success, error, options) { calls.push({ success, error, options }); } } };
+  const service = loader({ 'react-native': { Platform: { OS: 'web' } }, 'expo-location': {} }, { navigator, ...timers })('src/services/reportLocation.ts');
+  const pending = service.captureReportLocation();
+  assert.equal(calls.length, 1);
+  assert.deepEqual({ ...calls[0].options }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+  timers.fire(12000);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(calls.length, 2);
+  assert.deepEqual({ ...calls[1].options }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 0 });
+  calls[1].success({ coords: { latitude: 14.97, longitude: -89.53, accuracy: 35 }, timestamp: Date.now() });
+  const position = await pending;
+  calls[0].success({ coords: { latitude: 10, longitude: 20, accuracy: 5 }, timestamp: Date.now() });
+  assert.equal(position.latitude, 14.97);
+  assert.equal(service.isPreciseReportLocation(position), true);
+});
+
+test('web GPS distinguishes denied permission, unavailable position, stale coordinates and imprecision', async () => {
+  for (const code of [1, 2, 3]) {
+    const calls = [];
+    const navigator = { geolocation: { getCurrentPosition(success, error) { calls.push({ success, error }); } } };
+    const service = loader({ 'react-native': { Platform: { OS: 'web' } }, 'expo-location': {} }, { navigator })('src/services/reportLocation.ts');
+    const pending = service.captureReportLocation();
+    calls[0].error({ code });
+    if (code === 1) {
+      await assert.rejects(pending, (error) => error.reason === 'denied');
+      assert.equal(calls.length, 1);
+    } else {
+      await Promise.resolve(); await Promise.resolve();
+      assert.equal(calls.length, 2);
+      calls[1].error({ code });
+      await assert.rejects(pending, (error) => error.reason === (code === 3 ? 'timeout' : 'unavailable'));
+    }
+  }
+  const calls = [];
+  const navigator = { geolocation: { getCurrentPosition(success) { calls.push(success); } } };
+  const service = loader({ 'react-native': { Platform: { OS: 'web' } }, 'expo-location': {} }, { navigator })('src/services/reportLocation.ts');
+  let pending = service.captureReportLocation();
+  calls[0]({ coords: { latitude: 14.97, longitude: -89.53, accuracy: 25 }, timestamp: Date.now() - 60_000 });
+  await assert.rejects(pending, (error) => error.reason === 'stale');
+  assert.equal(calls.length, 1);
+  pending = service.captureReportLocation();
+  calls[1]({ coords: { latitude: 14.97, longitude: -89.53, accuracy: 500 }, timestamp: Date.now() });
+  const approximate = await pending;
+  assert.equal(service.isPreciseReportLocation(approximate), false);
+  assert.equal(service.isPreciseReportLocation({ ...approximate, timestamp: Date.now() - 11 * 60_000 }), false);
+  pending = service.captureReportLocation();
+  calls[2]({ coords: { latitude: 91, longitude: -89.53, accuracy: 20 }, timestamp: Date.now() });
+  await assert.rejects(pending, (error) => error.reason === 'invalid');
+  assert.equal(calls.length, 3);
+});
+
+test('web GPS does not retry a synchronous browser permission denial', async () => {
+  let calls = 0;
+  const navigator = { geolocation: { getCurrentPosition() { calls++; throw Object.assign(new Error('blocked'), { name: 'NotAllowedError' }); } } };
+  const service = loader({ 'react-native': { Platform: { OS: 'web' } }, 'expo-location': {} }, { navigator })('src/services/reportLocation.ts');
+  await assert.rejects(service.captureReportLocation(), (error) => error.reason === 'denied');
+  assert.equal(calls, 1);
+});
+
+test('native GPS bounds the high-accuracy wait and recovers with balanced accuracy', async () => {
+  const timers = manualTimers();
+  const high = deferred();
+  const calls = [];
+  const service = loader({
+    'react-native': { Platform: { OS: 'android' } },
+    'expo-location': {
+      Accuracy: { High: 'high', Balanced: 'balanced' },
+      requestForegroundPermissionsAsync: async () => ({ granted: true }),
+      getCurrentPositionAsync: ({ accuracy }) => {
+        calls.push(accuracy);
+        return accuracy === 'high' ? high.promise : Promise.resolve({ coords: { latitude: 14.97, longitude: -89.53, accuracy: 40 }, timestamp: Date.now() });
+      }
+    }
+  }, timers)('src/services/reportLocation.ts');
+  const pending = service.captureReportLocation();
+  await Promise.resolve(); await Promise.resolve();
+  assert.deepEqual(calls, ['high']);
+  timers.fire(12000);
+  const position = await pending;
+  high.resolve({ coords: { latitude: 0, longitude: 0, accuracy: 1 }, timestamp: Date.now() });
+  assert.deepEqual(calls, ['high', 'balanced']);
+  assert.equal(position.latitude, 14.97);
+});
+
 function reportScreenHarness(client, File, options = {}) {
   const slots = [];
   const effects = [];
@@ -1242,19 +1344,20 @@ function reportScreenHarness(client, File, options = {}) {
       useEffect(callback) { const slot = index++; if (!(slot in slots)) { slots[slot] = true; effects.push(callback); } }
     },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-    'react-native': { ...native, Platform: { OS: 'android' }, Alert: { alert: (...args) => alerts.push(args) }, StyleSheet: { create: (value) => value } },
+    'react-native': { ...native, Platform: { OS: options.platform ?? 'android' }, Alert: { alert: (...args) => alerts.push(args) }, StyleSheet: { create: (value) => value } },
     '@react-native-community/netinfo': { fetch: async () => ({ isConnected: true, isInternetReachable: true }) },
     '@/services/offlineReports': { cacheReportCategories: async () => {}, readCachedReportCategories: async () => [], queueOfflineReport: async () => ({ id: 'queued-report' }) },
     'expo-file-system': { File },
     'expo-router': { Redirect: 'Redirect', router: {} },
     'expo-camera': { CameraView: 'CameraView', useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] },
     'expo-location': {
-      Accuracy: { High: 'high' },
+      Accuracy: { High: 'high', Balanced: 'balanced' },
       requestForegroundPermissionsAsync: async () => { locationCalls.push('permission'); return { granted: options.locationGranted ?? true }; },
       getCurrentPositionAsync: async (config) => {
         locationCalls.push(config);
         if (options.locationError) throw new Error('GPS unavailable');
-        return { coords: { latitude: 14.97, longitude: -89.53, accuracy: 12 } };
+        if (options.locationResults?.length) return options.locationResults.shift();
+        return { coords: { latitude: 14.97, longitude: -89.53, accuracy: 12 }, timestamp: Date.now() };
       }
     },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
@@ -1265,7 +1368,7 @@ function reportScreenHarness(client, File, options = {}) {
     '@/context/SessionContext': { useSession: () => ({ role: 'citizen', userId: 'citizen-local', fullName: 'Ciudadano local', email: 'citizen@example.invalid', isAuthenticated: true, isLoading: false, isPasswordRecovery: false, signInAsGuest: async () => {}, ...options.session }) },
     'expo-image-picker': { launchImageLibraryAsync: options.pickImages ?? (async () => ({ canceled: false, assets: [{ uri: 'file:///cache/source.jpg' }] })) },
     'expo-image-manipulator': { SaveFormat: { JPEG: 'jpeg' }, ImageManipulator: { manipulate: () => ({ renderAsync: async () => ({ width: 800, height: 600, saveAsync: async () => ({ uri: 'file:///cache/photo.jpg' }) }) }) } }
-  }, { process: { env: {} } });
+  }, { process: { env: {} }, ...options.globals });
   const screen = load('app/report/new.tsx').default;
   return { alerts, locationCalls, render() { index = 0; return screen(); }, mount() { return effects.splice(0).map((effect) => effect()); } };
 }
@@ -1310,9 +1413,60 @@ test('the screen requires GPS and a photo, and denied or failed location never c
     if (scenario === 'missing-photo' || scenario === 'unavailable') {
       assert.equal(harness.locationCalls[0], 'permission');
       assert.equal(harness.locationCalls[1].accuracy, 'high');
+      if (scenario === 'unavailable') assert.equal(harness.locationCalls[2].accuracy, 'balanced');
     }
     assert.ok(!calls.some((call) => ['upload', 'rpc', 'insert', 'update'].includes(call.operation)));
   }
+});
+
+test('the report keeps imprecise GPS blocked and allows a fresh retry without reloading', async () => {
+  const { client } = creationClientDouble();
+  const harness = reportScreenHarness(client, LocalPhotoDouble, {
+    locationResults: [
+      { coords: { latitude: 14.97, longitude: -89.53, accuracy: 450 }, timestamp: Date.now() },
+      { coords: { latitude: 14.97, longitude: -89.53, accuracy: 35 }, timestamp: Date.now() }
+    ]
+  });
+  let tree = await fillReportForm(harness);
+  await pressLocation(tree);
+  tree = harness.render();
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'Ubicación demasiado imprecisa'));
+  assert.ok(nodes(tree).some((node) => typeof node.props?.children === 'string' && node.props.children.includes('450 m')));
+  assert.equal(nodes(tree).find((node) => node.props?.label === 'Enviar reporte').props.disabled, true);
+  const retry = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Ubicación demasiado imprecisa'));
+  assert.equal(retry.props.disabled, false);
+  await retry.props.onPress();
+  tree = harness.render();
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'Ubicación GPS registrada'));
+  assert.ok(nodes(tree).some((node) => typeof node.props?.children === 'string' && node.props.children.includes('35 m')));
+  assert.equal(harness.locationCalls.filter((item) => item.accuracy === 'high').length, 2);
+});
+
+test('the web report clears the locating state after both GPS deadlines and accepts a manual retry', async () => {
+  const { client } = creationClientDouble();
+  const timers = manualTimers();
+  const calls = [];
+  const navigator = { geolocation: { getCurrentPosition(success, error, options) { calls.push({ success, error, options }); } } };
+  const harness = reportScreenHarness(client, LocalPhotoDouble, { platform: 'web', globals: { navigator, ...timers } });
+  await fillReportForm(harness);
+  const first = pressLocation(harness.render());
+  timers.fire(12000);
+  await Promise.resolve(); await Promise.resolve();
+  timers.fire(8000);
+  await first;
+  let tree = harness.render();
+  assert.ok(nodes(tree).some((node) => typeof node.props?.children === 'string' && node.props.children.includes('Se agotó el tiempo')));
+  const retry = nodes(tree).find((node) => node.type === 'Pressable' && nodes(node).some((child) => child.props?.children === 'Obtener ubicación GPS'));
+  assert.equal(retry.props.disabled, false);
+  const second = retry.props.onPress();
+  calls[2].success({ coords: { latitude: 14.97, longitude: -89.53, accuracy: 30 }, timestamp: Date.now() });
+  await second;
+  calls[0].success({ coords: { latitude: 10, longitude: 20, accuracy: 1 }, timestamp: Date.now() });
+  calls[1].success({ coords: { latitude: 10, longitude: 20, accuracy: 1 }, timestamp: Date.now() });
+  tree = harness.render();
+  assert.ok(nodes(tree).some((node) => node.props?.children === 'Ubicación GPS registrada'));
+  assert.ok(nodes(tree).some((node) => typeof node.props?.children === 'string' && node.props.children.includes('14.970000, -89.530000')));
+  assert.ok(!nodes(tree).some((node) => typeof node.props?.children === 'string' && node.props.children.includes('Se agotó el tiempo')));
 });
 
 test('the gallery honors the remaining five-photo limit and the screen sends all selected evidence together', async () => {
