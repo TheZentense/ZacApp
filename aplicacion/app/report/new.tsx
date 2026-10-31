@@ -4,7 +4,6 @@ import NetInfo from '@react-native-community/netinfo';
 import * as Crypto from 'expo-crypto';
 import { Redirect, router } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { AppButton } from '@/components/AppButton';
 import { ErrorState, LoadingState } from '@/components/DataState';
@@ -16,6 +15,7 @@ import { optimizeEvidence, selectEvidenceImages } from '@/services/evidenceImage
 import { TurnstileChallenge } from '@/components/TurnstileChallenge';
 import { guestReportProtectionEnabled } from '@/lib/guestReportSecurity';
 import { cacheReportCategories, queueOfflineReport, readCachedReportCategories } from '@/services/offlineReports';
+import { captureReportLocation, isPreciseReportLocation, MAX_REPORT_ACCURACY_METERS, ReportLocationError, type ReportCoordinates } from '@/services/reportLocation';
 
 const previewCategories: ReportCategory[] = [
   { id: 1, name: 'Alumbrado público' },
@@ -44,8 +44,11 @@ export default function NewReportScreen() {
   const [categoriesError, setCategoriesError] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
-  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number; accuracy: number | null } | null>(null);
+  const [coordinates, setCoordinates] = useState<ReportCoordinates | null>(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const locatingRef = useRef(false);
+  const locationAttemptRef = useRef(0);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -69,25 +72,30 @@ export default function NewReportScreen() {
   const resetCaptcha = () => { setCaptchaToken(''); setCaptchaResetKey((value) => value + 1); };
 
   const captureLocation = async () => {
-    if (isLocating || requestInFlight.current) return;
+    if (locatingRef.current || requestInFlight.current) return;
+    locatingRef.current = true;
+    const attempt = ++locationAttemptRef.current;
     setIsLocating(true);
+    setCoordinates(null);
+    setLocationError('');
     try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert('Permiso requerido', 'Permite el acceso a la ubicación para registrar el punto exacto del incidente.');
-        return;
+      const current = await captureReportLocation();
+      if (!mountedRef.current || attempt !== locationAttemptRef.current) return;
+      setCoordinates(current);
+      if (current.accuracy > MAX_REPORT_ACCURACY_METERS) {
+        setLocationError(`La precisión es de ${Math.round(current.accuracy)} m. Se requieren ${MAX_REPORT_ACCURACY_METERS} m o menos para enviar el reporte. Vuelve a intentar en un lugar con mejor señal.`);
       }
-      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      if (!mountedRef.current) return;
-      setCoordinates({
-        latitude: current.coords.latitude,
-        longitude: current.coords.longitude,
-        accuracy: current.coords.accuracy
-      });
-    } catch {
-      if (mountedRef.current) Alert.alert('No fue posible obtener la ubicación', 'Activa el GPS y vuelve a intentarlo en un lugar con mejor señal.');
+    } catch (error) {
+      if (mountedRef.current && attempt === locationAttemptRef.current) {
+        const message = error instanceof ReportLocationError ? error.message : 'No fue posible obtener la ubicación. Activa el GPS y vuelve a intentar.';
+        setLocationError(message);
+        if (Platform.OS !== 'web') Alert.alert(error instanceof ReportLocationError && error.reason === 'denied' ? 'Permiso requerido' : 'No fue posible obtener la ubicación', message);
+      }
     } finally {
-      if (mountedRef.current) setIsLocating(false);
+      if (attempt === locationAttemptRef.current) {
+        locatingRef.current = false;
+        if (mountedRef.current) setIsLocating(false);
+      }
     }
   };
 
@@ -118,7 +126,8 @@ export default function NewReportScreen() {
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!isSupabaseConfigured) return () => { mountedRef.current = false; };
+    const attemptRef = locationAttemptRef;
+    if (!isSupabaseConfigured) return () => { mountedRef.current = false; attemptRef.current++; };
 
     let active = true;
     listReportCategories()
@@ -142,6 +151,7 @@ export default function NewReportScreen() {
     return () => {
       active = false;
       mountedRef.current = false;
+      attemptRef.current++;
     };
   }, []);
 
@@ -187,7 +197,7 @@ export default function NewReportScreen() {
     const selectedCategory = categories.find((item) => item.name === category);
     if (isAuthenticated && !isGuest && (!fullName.trim() || !email.trim())) return Alert.alert('Perfil incompleto', 'Tu cuenta necesita nombre y correo antes de registrar un reporte.');
     if (!selectedCategory || description.trim().length < 10 || !location.trim()) return Alert.alert('Datos incompletos', 'Selecciona una categoría y agrega una descripción de al menos 10 caracteres y una referencia.');
-    if (!coordinates) return Alert.alert('GPS requerido', 'Obtén la ubicación exacta del incidente antes de enviar.');
+    if (!coordinates || !isPreciseReportLocation(coordinates)) return Alert.alert('GPS requerido', 'Obtén una ubicación actual con precisión suficiente antes de enviar.');
     if (!evidence.length) return Alert.alert('Fotografía requerida', 'Toma o selecciona al menos una fotografía del incidente antes de enviar.');
     if (protectedGuestFlow && !captchaSiteKey) return Alert.alert('Verificación no disponible', 'Este dispositivo todavía no tiene configurada la verificación de reportes invitados.');
     if ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken) return Alert.alert('Verificación requerida', 'Confirma que eres una persona antes de enviar el reporte.');
@@ -340,14 +350,15 @@ export default function NewReportScreen() {
         <Text style={styles.label}>Ubicación o referencia</Text>
         <View style={styles.inputWithIcon}><Ionicons name="location-outline" size={20} color={colors.secondary} /><TextInput style={styles.inlineInput} value={location} editable={!isSubmitting} onChangeText={setLocation} placeholder="Barrio, calle o punto de referencia" placeholderTextColor={colors.muted} /></View>
 
-        <Pressable style={[styles.locationCard, coordinates && styles.locationCardReady]} disabled={isSubmitting || isLocating} onPress={captureLocation}>
-          <View style={[styles.locationIcon, coordinates && styles.locationIconReady]}><Ionicons name={coordinates ? 'checkmark' : 'navigate-outline'} size={22} color={colors.white} /></View>
+        <Pressable style={[styles.locationCard, isPreciseReportLocation(coordinates) && styles.locationCardReady]} disabled={isSubmitting || isLocating} onPress={captureLocation}>
+          <View style={[styles.locationIcon, isPreciseReportLocation(coordinates) && styles.locationIconReady]}><Ionicons name={isPreciseReportLocation(coordinates) ? 'checkmark' : 'navigate-outline'} size={22} color={colors.white} /></View>
           <View style={styles.locationText}>
-            <Text style={styles.locationTitle}>{coordinates ? 'Ubicación GPS registrada' : 'Obtener ubicación GPS'}</Text>
-            <Text style={styles.locationCopy}>{isLocating ? 'Buscando señal...' : coordinates ? `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}${coordinates.accuracy ? ` · precisión aproximada ${Math.round(coordinates.accuracy)} m` : ''}` : 'Es obligatoria y se solicitará permiso al dispositivo.'}</Text>
+            <Text style={styles.locationTitle}>{isPreciseReportLocation(coordinates) ? 'Ubicación GPS registrada' : coordinates ? coordinates.accuracy > MAX_REPORT_ACCURACY_METERS ? 'Ubicación demasiado imprecisa' : 'Ubicación vencida; toca para actualizar' : 'Obtener ubicación GPS'}</Text>
+            <Text style={styles.locationCopy}>{isLocating ? 'Buscando señal...' : coordinates ? `${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)} · precisión ${Math.round(coordinates.accuracy)} m` : 'Es obligatoria. Toca para obtenerla o reintentar.'}</Text>
           </View>
-          <Ionicons name={coordinates ? 'refresh-outline' : 'arrow-forward'} size={19} color={colors.primary} />
+          <Ionicons name={coordinates || locationError ? 'refresh-outline' : 'arrow-forward'} size={19} color={colors.primary} />
         </Pressable>
+        {locationError ? <Text style={styles.locationWarning}>{locationError}</Text> : null}
 
         <View style={styles.divider} />
         <View style={styles.sectionTitleRow}><View style={styles.sectionNumber}><Text style={styles.sectionNumberText}>04</Text></View><View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Evidencia fotográfica</Text><Text style={styles.sectionCopy}>Agrega de 1 a {maxEvidence} fotografías. La primera será la evidencia inicial.</Text></View><View style={styles.evidenceCount}><Text style={styles.evidenceCountText}>{evidence.length}/{maxEvidence}</Text></View></View>
@@ -376,7 +387,7 @@ export default function NewReportScreen() {
           {protectedGuestFlow && !isAuthenticated ? <Text style={styles.privacyText}>Primero inicia una sesión invitada. Después completa una verificación nueva para este reporte.</Text> : null}
           {protectedGuestFlow && isGuest ? <Text style={styles.privacyText}>Cada reporte requiere una verificación nueva, incluso si ya ingresaste como invitado.</Text> : null}
           {(!isAuthenticated || protectedGuestFlow) && captchaRequired ? <TurnstileChallenge siteKey={captchaSiteKey} action={captchaAction} resetKey={captchaResetKey} onToken={setCaptchaToken} onExpire={() => setCaptchaToken('')} onError={() => { setCaptchaToken(''); Alert.alert('Verificación no disponible', 'No fue posible cargar la verificación de seguridad. Inténtalo nuevamente.'); }} /> : null}
-          <AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !coordinates || evidence.length < 1 || (isAuthenticated && !isGuest && (!fullName || !email)) || (protectedGuestFlow && !captchaSiteKey) || ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken)} label={isSubmitting ? protectedGuestFlow && !isAuthenticated ? 'Preparando sesión...' : `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : protectedGuestFlow && !isAuthenticated ? 'Continuar como invitado' : 'Enviar reporte'} icon="send-outline" onPress={submit} />
+          <AppButton disabled={isSubmitting || isCapturing || isLocating || categoriesLoading || !category || !isPreciseReportLocation(coordinates) || evidence.length < 1 || (isAuthenticated && !isGuest && (!fullName || !email)) || (protectedGuestFlow && !captchaSiteKey) || ((!isAuthenticated || protectedGuestFlow) && captchaRequired && !captchaToken)} label={isSubmitting ? protectedGuestFlow && !isAuthenticated ? 'Preparando sesión...' : `Subiendo ${evidence.length} ${evidence.length === 1 ? 'fotografía' : 'fotografías'}...` : protectedGuestFlow && !isAuthenticated ? 'Continuar como invitado' : 'Enviar reporte'} icon="send-outline" onPress={submit} />
         </View>
         <AppButton label="Cancelar" disabled={isSubmitting || isCapturing} variant="ghost" icon="close-outline" onPress={() => router.back()} />
       </View>
@@ -465,6 +476,7 @@ const styles = StyleSheet.create({
   locationText: { flex: 1 },
   locationTitle: { color: colors.primary, fontSize: 15, fontWeight: '800' },
   locationCopy: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
+  locationWarning: { color: colors.danger, fontSize: 13, lineHeight: 19, fontWeight: '700' },
   cameraButton: { minHeight: 82, backgroundColor: colors.softGreen, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cameraIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   cameraButtonText: { flex: 1 },
